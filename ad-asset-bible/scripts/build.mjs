@@ -57,7 +57,7 @@ const DOWNSTREAM = ['机位','景别','构图','焦段','景深','虚化','运�
    长词里才放过，不是给「色相」开白名单。
    ★ 往这里加词的判据只有一条：这个长词是**画面里看得见的东西名**，
      而不是在描述色彩/机位/光线的决策。拿不准就别加，改措辞更省事。 */
-const DOWNSTREAM_OK = ['彩色相纸','彩色相片','黑白相纸','单色相机','原色相纸'];
+const DOWNSTREAM_OK = ['彩色相纸','彩色相片','黑白相纸','单色相机','原色相纸','音色偏冷','音色偏暖','声音偏冷','声音偏暖','嗓音偏冷','嗓音偏暖'];
 const BRIEF_MAX = 300;   // 需求描述字数上限。超了就是又在写规格书了
 const HTML_RE = /<\/?(div|span|style|p|br|table|tr|td|b|i|em|strong)\b|style\s*=\s*["']|background\s*:|<script/i;
 
@@ -498,10 +498,9 @@ for (const [i, a] of LOCS.entries()) {
   claim(a.tag, P, /^@loc_[a-z0-9_]+$/, '@loc_<小写英数下划线>');
   if (!a.name) E(`${P}.name`, '缺场景名', '');
   if (a.note !== undefined && a.note !== '') checkPlaceholder(a.note, `${P}.note`);
-  if (a.refs !== undefined) {
-    if (!Array.isArray(a.refs)) E(`${P}.refs`, 'refs 必须是数组', '例 ["@char_xiaoming"]。画面里没有谁的形象就省掉。');
-    else a.refs.forEach((r, k) => locRefUses.push({ ref: r, path: `${P}.refs[${k}]` }));
-  }
+  if (a.refs !== undefined)
+    E(`${P}.refs`, '主场景上写了人物形象', '主场景是空着的底图（空相框、看不清脸的雕像）；' +
+      '另建一个变体放上那个人的形象，refs 写在变体上 —— 这样所有图都从同一张干净的文生图只编辑一次。');
   if (a.basedOn !== undefined && a.basedOn !== '') {
     if (a.basedOn === a.tag)
       E(`${P}.basedOn`, '指向了自己', 'basedOn 是"这份场景衍生自哪个主区域"，不能指自己。');

@@ -56,7 +56,7 @@
   图/             出好的图（有出图通道时）
 ```
 
-`S` 是本仓库 `ad-asset-bible/scripts` 的绝对路径，命令要写全路径：
+`S` 是本仓库 `ad-asset-bible/scripts` 的绝对路径，命令要写全路径（PowerShell 里同样能跑，路径带空格就加双引号）。需要 node 18+；挂图和出图还要 ffmpeg、ffprobe：
 
 ```bash
 node "$S/attach-plan.mjs" 数据/盘点.json 数据/设计稿.json 数据/出图单.json 数据/合并.json

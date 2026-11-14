@@ -80,7 +80,6 @@ const withPlan = d => {
   d.outfits[0].refImage = [d.characters[0].tag];
   d.outfits[0].design = '一身旧工装，袖口磨得发白。';
   d.meta.designNote = '写实真人；当代中国北方小城。';
-  d.assets[0].refs = [d.characters[0].tag];          // 场景画面里挂着这个人的照片：可以只指底档
   d.assets[0].variants[0].refs = [d.characters[0].tag];   // 也可以写在场景变体上（主资产是空相框的底图）
   d.characters[1].sameFaceAs = d.characters[0].tag;  // 同一张脸、两个人
   return d;
@@ -294,6 +293,10 @@ const CASES = [
       d.assets[0].variants[0].prompt = 'The room in <Picture 1> at night.'; d.assets[0].variants[0].size = '3136x1344';
       d.assets[0].variants[0].refImage = [d.assets[1].tag]; } },
 
+  { name: 'locref-on-main', expect: '主场景上写了人物形象',
+    note: '人物形象写在主场景上 —— 主场景应是空着的底图，形象放变体',
+    mut: d => { withPlan(d); d.assets[0].refs = [d.characters[0].tag]; } },
+
   { name: 'locref-var-dangling', expect: '不存在',
     note: '场景变体上的 refs 拼错',
     mut: d => { withPlan(d); d.assets[0].variants[0].refs = ['@char_nobody']; } },
@@ -308,7 +311,7 @@ const CASES = [
 
   { name: 'locref-not-char', expect: '不是角色',
     note: '场景 refs 指到了道具 —— 场景只登记画面里出现的人物形象',
-    mut: d => { withPlan(d); d.assets[0].refs = [d.props[0].tag]; } },
+    mut: d => { withPlan(d); d.assets[0].variants[0].refs = [d.props[0].tag]; } },
 
   { name: 'vfx-count-missing', expect: 'meta.vfxCount',
     note: '有特效却没报数，没法跟表格对账',

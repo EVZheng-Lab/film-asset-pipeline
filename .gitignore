@@ -1,0 +1,7 @@
+# 系统垃圾 / 网盘同步临时文件
+*.baiduyun.uploading.cfg
+Thumbs.db
+desktop.ini
+.DS_Store
+.env
+node_modules/

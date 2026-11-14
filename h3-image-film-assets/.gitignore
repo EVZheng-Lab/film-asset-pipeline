@@ -1,0 +1,6 @@
+tmp/
+out/
+*.png
+.env
+Thumbs.db
+desktop.ini

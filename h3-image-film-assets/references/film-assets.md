@@ -151,9 +151,14 @@ H3 场景的毛病和写法：
 
 出不出图看用户有没有通道。不要假设用户有哪台机器：
 
-- **ComfyUI**（装了 H3-Image 的模型；本机要有 node 18+、ffmpeg 和 ffprobe）：`node scripts/render-comfyui.mjs <出图单.json> <图片目录> --server http://<主机>:8188`。
+- **ComfyUI**（装了 H3-Image 的模型；本机要有 node 18+、ffmpeg 和 ffprobe）：用 `scripts/render-comfyui.mjs`，**分两段，中间让用户挑图**
+  （EV 2026-11-15 定：编辑图都拿文生图当参考，底图不对，后面全白出）：
+  1. `--stage t2i`：只出文生图，每张出 4 个候选（`--n` 改个数），生成 `<图片目录>/候选/挑图.html`。**出完停下**，把挑图网页给用户
+  2. 用户在挑图网页里每个资产选一张、导出 `选择.json`（或在对话里说"公园选 3"，你写成 `{"@loc_gongyuan": 3}`）；
+     `--pick 选择.json` 把选中的拷成正式的图。选 0 = 都不要：删掉候选，换个 `--seed` 再跑第 1 步重抽那几个
+  3. `--stage edit`：出所有带参考图的，都拿选中的那张当参考，每张出一个
   按依赖顺序出、参考图自动缩到约 4MP、已出的跳过（断了重跑接着出）；模型文件名不同就加 `--unet / --clip / --vae`。
-  单张重抽：删掉那张图，加 `--only <tag> --seed <新种子>` 再跑
+  编辑图单张重出：删掉那张，加 `--only <tag> --seed <新种子>` 再跑 `--stage edit`
 - **MiniMax API**（有 `MINIMAX_API_KEY`）：`scripts/generate.py`，一张一张按依赖顺序发
 - **都没有**：停在出图单
 

@@ -17,7 +17,7 @@
  *   --n N            文生图每张出几个候选，默认 4（种子 seed、seed+1 …）
  *   --seed N         起始种子，默认 42；重抽时换一个（如 100）
  *   --only a,b       只出这几个 tag（逗号分隔，带不带 @ 都行）
- *   --unet / --clip / --vae   模型文件名，默认是本仓库作者跑图机上的文件名，按自己的改
+ *   --unet / --clip / --vae   模型文件名，默认是官方 ComfyUI 模板的文件名，装的不一样就改
  *
  * 文件：选定的图是 <图片目录>/<tag 去掉 @>.png（@char_lin → char_lin.png），副导演的 attach-images.mjs 按文件夹挂回网页；
  * 候选在 <图片目录>/候选/<tag>_<k>.png，预览 JPEG 在 候选/预览/。已经存在的都跳过，断了重跑会接着出。
@@ -28,6 +28,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+const WF_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'comfyui');
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf('--' + k); return i >= 0 ? argv.splice(i, 2)[1] : d; };
@@ -38,7 +40,7 @@ const stage = opt('stage', '');
 const pick = opt('pick', '');
 const only = opt('only', '');
 const UNET = opt('unet', 'minimax_h3_image_pruned_int8_convrot.safetensors');
-const CLIP = opt('clip', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors');
+const CLIP = opt('clip', 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors');
 const VAE = opt('vae', 'minimax_h3_image_vae_fp16.safetensors');
 const [planPath, outDir] = argv;
 if (!planPath || !outDir || (!S && !pick) || (stage && !['t2i', 'edit'].includes(stage))) {
@@ -98,19 +100,16 @@ function to4mp(src, dst) {
 async function render(tag, seed, dest) {
   const p = PLAN[tag];
   const [W, H] = String(p.size || '2048x2048').split('x').map(Number);
-  const wf = {
-    1: { class_type: 'UNETLoader', inputs: { unet_name: UNET, weight_dtype: 'default' } },
-    2: { class_type: 'CLIPLoader', inputs: { clip_name: CLIP, type: 'minimax', device: 'default' } },
-    3: { class_type: 'VAELoader', inputs: { vae_name: VAE } },
-    5: { class_type: 'MiniMaxH3ImageConditioning', inputs: { clip: ['2', 0], prompt: p.prompt, width: W, height: H } },
-    6: { class_type: 'ConditioningZeroOut', inputs: { conditioning: ['5', 0] } },
-    7: { class_type: 'KSampler', inputs: { model: ['1', 0], positive: ['5', 0], negative: ['6', 0], latent_image: ['5', 1], seed, steps: 6, cfg: 1, sampler_name: 'euler', scheduler: 'simple', denoise: 1 } },
-    8: { class_type: 'VAEDecode', inputs: { samples: ['7', 0], vae: ['3', 0] } },
-    9: { class_type: 'SaveImage', inputs: { images: ['8', 0], filename_prefix: 'h3/' + base(tag) } },
-  };
-  const refs = p.refImage || [];
+  /* 工作流就是仓库 comfyui/ 下的两个 API 文件 —— 想在 ComfyUI 里手动跑，打开同一份 */
+  const refs0 = p.refImage || [];
+  const wf = JSON.parse(fs.readFileSync(path.join(WF_DIR, refs0.length ? 'h3_edit.api.json' : 'h3_t2i.api.json'), 'utf8'));
+  wf[1].inputs.unet_name = UNET; wf[2].inputs.clip_name = CLIP; wf[3].inputs.vae_name = VAE;
+  Object.assign(wf[5].inputs, { prompt: p.prompt, width: W, height: H });
+  wf[7].inputs.seed = seed;
+  wf[9].inputs.filename_prefix = 'h3/' + base(tag);
+  delete wf[100]; delete wf[5].inputs['images.image_1'];
+  const refs = refs0;
   if (refs.length) {
-    wf[5].inputs.vae = ['3', 0];
     for (const [i, r] of refs.entries()) {
       if (!fs.existsSync(file(r))) throw new Error(`参考图 ${r} 还没出或还没选（${file(r)}）`);
       const small = path.join(tmp, `${base(tag)}_ref${i + 1}.png`);

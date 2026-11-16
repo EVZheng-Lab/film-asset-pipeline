@@ -18,6 +18,7 @@
  *   --seed N         起始种子，默认 42；重抽时换一个（如 100）
  *   --only a,b       只出这几个 tag（逗号分隔，带不带 @ 都行）
  *   --unet / --clip / --vae   模型文件名，默认是官方 ComfyUI 模板的文件名，装的不一样就改
+ *   --names 盘点.json   挑图网页上显示剧本里的名字；不写就找出图单同目录下的 盘点.json，找不到只显示 tag
  *
  * 文件：选定的图是 <图片目录>/<tag 去掉 @>.png（@char_lin → char_lin.png），副导演的 attach-images.mjs 按文件夹挂回网页；
  * 候选在 <图片目录>/候选/<tag>_<k>.png，预览 JPEG 在 候选/预览/。已经存在的都跳过，断了重跑会接着出。
@@ -38,6 +39,7 @@ const seed0 = +opt('seed', 42);
 const N = +opt('n', 4);
 const stage = opt('stage', '');
 const pick = opt('pick', '');
+const namesPath = opt('names', '');
 const only = opt('only', '');
 const UNET = opt('unet', 'minimax_h3_image_pruned_int8_convrot.safetensors');
 const CLIP = opt('clip', 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors');
@@ -49,6 +51,14 @@ if (!planPath || !outDir || (!S && !pick) || (stage && !['t2i', 'edit'].includes
   process.exit(2);
 }
 const PLAN = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+/* tag → 剧本里的名字：在盘点里找所有带 tag 和 name 的条目（场景、变体、角色、服装、状态、道具、特效） */
+const NAMES = {};
+try {
+  const walk = (o) => { if (Array.isArray(o)) o.forEach(walk); else if (o && typeof o === 'object') {
+    if (typeof o.tag === 'string' && typeof o.name === 'string') NAMES[o.tag] = o.name;
+    Object.values(o).forEach(walk); } };
+  walk(JSON.parse(fs.readFileSync(namesPath || path.join(path.dirname(planPath), '盘点.json'), 'utf8')));
+} catch (e) { if (namesPath) throw e; }
 delete PLAN._note;
 delete PLAN._design;
 const CAND = path.join(outDir, '候选'), PREV = path.join(CAND, '预览');
@@ -151,7 +161,7 @@ function buildPickPage() {
     }
     /* v = 这组候选的版本（各候选文件的生成时间）。重抽后候选换了，v 就变，浏览器里存的旧选择自动作废 */
     const v = ks.map((k) => Math.round(fs.statSync(cand(tag, k)).mtimeMs).toString(36)).join('.');
-    if (ks.length) rows.push({ tag, size: PLAN[tag].size || '', ks, v, chosen: fs.existsSync(file(tag)) });
+    if (ks.length) rows.push({ tag, name: (NAMES[tag] || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])), size: PLAN[tag].size || '', ks, v, chosen: fs.existsSync(file(tag)) });
   }
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>挑图</title><style>
@@ -161,7 +171,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 system-ui,"Pi
 .bar b{color:var(--accent)} #cnt{color:var(--dim)} .wrap{padding:16px 24px}
 button{font:inherit;cursor:pointer}
 .exp{margin-left:auto;background:var(--accent);color:#111;border:0;border-radius:6px;height:40px;padding:0 18px;font-weight:600}
-.row{margin-bottom:22px} .hd{margin-bottom:8px} .hd code{color:var(--accent)} .hd span{color:var(--dim);margin-left:8px;font-size:12px}
+.row{margin-bottom:22px} .hd{margin-bottom:8px} .hd .nm{font-size:16px;margin-right:10px} .hd code{color:var(--dim);font-size:12px} .hd span{color:var(--dim);margin-left:8px;font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .c{border:2px solid var(--border);border-radius:8px;background:var(--panel2);overflow:hidden}
 .c img{display:block;width:100%;cursor:zoom-in}
@@ -173,21 +183,23 @@ button{font:inherit;cursor:pointer}
 #lb{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;align-items:center;justify-content:center;cursor:zoom-out;z-index:9}
 #msg{color:#4ade80}
 .exp:disabled{opacity:.5;cursor:default}
-#lb.on{display:flex} #lb img{max-width:96vw;max-height:96vh}
+#lb.on{display:flex} #lb img{max-width:96vw;max-height:96vh;cursor:zoom-in}
+#lb.full{display:block;overflow:auto} #lb.full img{max-width:none;max-height:none;cursor:zoom-out}
+#lb .tip{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);color:var(--dim);font-size:12px;pointer-events:none}
 </style></head><body>
 <div class="bar"><b>挑图</b><span id="cnt"></span><span id="msg"></span><button class="exp" id="exp">复制选择</button></div>
-<div class="wrap" id="w"></div><div id="lb"><img alt=""></div>
+<div class="wrap" id="w"></div><div id="lb"><img alt=""><span class="tip"></span></div>
 <script>
 var R=${JSON.stringify(rows)};var S={};
 var w=document.getElementById('w'),lb=document.getElementById('lb');
 R.forEach(function(r){
   var d=document.createElement('div');d.className='row';
-  d.innerHTML='<div class="hd"><code>${''}'+r.tag+'</code><span>'+r.size+(r.chosen?' · 已选过，再选会覆盖':'')+'</span><button class="re" type="button">都不要，重抽</button></div><div class="grid"></div>';
+  d.innerHTML='<div class="hd">'+(r.name?'<b class="nm">'+r.name+'</b>':'')+'<code>${''}'+r.tag+'</code><span>'+r.size+(r.chosen?' · 已选过，再选会覆盖':'')+'</span><button class="re" type="button">都不要，重抽</button></div><div class="grid"></div>';
   var g=d.querySelector('.grid');
   r.ks.forEach(function(k){
     var c=document.createElement('div');c.className='c';
     c.innerHTML='<img loading="lazy" src="预览/'+r.tag.replace(/^@/,'')+'_'+k+'.jpg" alt="'+r.tag+' 候选 '+k+'"><div class="act"><span>'+k+'</span><button type="button">选这张</button></div>';
-    c.querySelector('img').onclick=function(){lb.querySelector('img').src=this.src;lb.classList.add('on')};
+    c.querySelector('img').onclick=function(){open(this.src,r.tag.replace(/^@/,'')+'_'+k+'.png')};
     c.querySelector('button').onclick=function(){S[r.tag]=k;sync()};
     g.appendChild(c);
   });
@@ -201,8 +213,15 @@ function sync(){
   var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length;
   document.getElementById('cnt').textContent='已选 '+n+' / '+R.length;
 }
-lb.onclick=function(){lb.classList.remove('on')};
-document.addEventListener('keydown',function(e){if(e.key==='Escape')lb.classList.remove('on')});
+/* 先显示预览，原图（16MP）读完再换上；点图切换 1:1，点黑底关闭 */
+var lbi=lb.querySelector('img'), tip=lb.querySelector('.tip'), seq=0;
+function open(pv,orig){var n=++seq;lbi.src=pv;tip.textContent='原图加载中…';lb.classList.remove('full');lb.classList.add('on');
+  var im=new Image();im.onload=function(){if(n!==seq)return;lbi.src=orig;tip.textContent='原图 '+im.naturalWidth+'×'+im.naturalHeight+'，点图看 1:1'};
+  im.onerror=function(){if(n===seq)tip.textContent='原图读不到，显示的是预览'};im.src=orig}
+function close(){seq++;lb.classList.remove('on','full')}
+lbi.onclick=function(e){e.stopPropagation();lb.classList.toggle('full')};
+lb.onclick=close;
+document.addEventListener('keydown',function(e){if(e.key==='Escape')close()});
 var exp=document.getElementById('exp'), msg=document.getElementById('msg');
 /* 选择存在本机浏览器里，关掉再开还在；复制出去的是一行一个 "<tag> <第几张>"，回对话里粘贴 */
 var KEY='pick:'+location.pathname;

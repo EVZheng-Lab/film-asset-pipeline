@@ -61,15 +61,14 @@ agent 会依次读三个 skill 的 `SKILL.md` 照着做，中间不停下来等�
 
 | 你有什么 | 怎么出 |
 |---|---|
-| 一台装了 H3-Image 的 ComfyUI | `render-comfyui.mjs` 分两段：先只出文生图（脸图、主场景、道具、特效），每张 4 个候选，在浏览器里点选，点「选完了」agent 自动接着往下走；选完再出所有拿它们当参考的编辑图。不会在你不满意的底图上白出一堆 |
+| 一台装了 H3-Image 的 ComfyUI | `render-comfyui.mjs` 分两段：先只出文生图（脸图、主场景、道具、特效），每张 4 个候选，双击打开挑图网页点选，点「复制选择」回对话粘贴；选完再出所有拿它们当参考的编辑图。不会在你不满意的底图上白出一堆 |
 | MiniMax API key | `h3-image-film-assets/scripts/generate.py`（官方脚本） |
 | 都没有 | 打开网页「提示词」页，复制提示词去自己的工具里出，图拖回卡上，保存网页 |
 
 ```bash
 S=h3-image-film-assets/scripts/render-comfyui.mjs
 node $S 数据/出图单.json 图/ --server http://<主机>:8188 --stage t2i      # ① 文生图，每张 4 个候选 → 图/候选/挑图.html
-node $S 数据/出图单.json 图/ --serve 3071                                 # ② 挑图服务：浏览器里点选，点「选完了」自动退出
-node $S 数据/出图单.json 图/ --pick 图/候选/选择.json                      #    选择是边点边存的，拷成正式的图
+node $S 数据/出图单.json 图/ --pick "<挑图网页「复制选择」复制的文字>"    # ② 双击打开 图/候选/挑图.html 选，复制粘贴回来
 node $S 数据/出图单.json 图/ --server http://<主机>:8188 --stage edit     # ③ 编辑图，参考选中的那张
 ```
 

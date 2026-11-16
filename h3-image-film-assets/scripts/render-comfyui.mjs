@@ -4,12 +4,11 @@
  *
  *   ① 文生图，每张出几个候选，生成挑图网页：
  *      node render-comfyui.mjs <出图单.json> <图片目录> --server http://<主机>:8188 --stage t2i [--n 4]
- *   ② 人挑图：开一个本地挑图服务，用户在浏览器里每个资产选一张，每点一次自动存进 候选/选择.json；
- *      点「选完了」服务就退出 —— 后台跑着它的 agent 会收到通知，接着往下走，用户不用回对话、不用传文件：
- *      node render-comfyui.mjs <出图单.json> <图片目录> --serve 3071      → http://<本机局域网 IP>:3071/
- *      然后 node render-comfyui.mjs <出图单.json> <图片目录> --pick <图片目录>/候选/选择.json
- *      0 = 都不要，重抽：会删掉那几张候选，再跑一次 ① 加 --seed 换一组种子。
- *      （直接双击打开 候选/挑图.html 也能挑，那样只能「导出选择」下载一个 选择.json。）
+ *   ② 人挑图：用户双击打开 <图片目录>/候选/挑图.html，每个资产选一张，点「复制选择」，回对话里粘贴。
+ *      粘贴的是一行一个 "<tag> <第几张>"（0 = 都不要，重抽），原样交给 --pick：
+ *      node render-comfyui.mjs <出图单.json> <图片目录> --pick "<粘贴的文字>"
+ *      （--pick 也接受一个 JSON 文件：{ "@loc_gongyuan": 3 }。用户在对话里直接说"公园选 3"也行，你照着写。）
+ *      重抽的那几张候选会被删掉；换个 --seed 再跑一次 ① 只会补出它们，再让用户挑一次。
  *   ③ 编辑（带参考图的），都拿选中的那张当参考：
  *      node render-comfyui.mjs <出图单.json> <图片目录> --server http://<主机>:8188 --stage edit
  *
@@ -37,15 +36,14 @@ const seed0 = +opt('seed', 42);
 const N = +opt('n', 4);
 const stage = opt('stage', '');
 const pick = opt('pick', '');
-const serve = opt('serve', '');
 const only = opt('only', '');
 const UNET = opt('unet', 'minimax_h3_image_pruned_int8_convrot.safetensors');
 const CLIP = opt('clip', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors');
 const VAE = opt('vae', 'minimax_h3_image_vae_fp16.safetensors');
 const [planPath, outDir] = argv;
-if (!planPath || !outDir || (!S && !pick && !serve) || (stage && !['t2i', 'edit'].includes(stage))) {
+if (!planPath || !outDir || (!S && !pick) || (stage && !['t2i', 'edit'].includes(stage))) {
   console.error('用法：node render-comfyui.mjs <出图单.json> <图片目录> --server http://<主机>:8188 [--stage t2i|edit] [--n 4] [--seed 42]\n' +
-    '      node render-comfyui.mjs <出图单.json> <图片目录> --pick <选择.json>');
+    '      node render-comfyui.mjs <出图单.json> <图片目录> --pick "<挑图网页复制的文字>"');
   process.exit(2);
 }
 const PLAN = JSON.parse(fs.readFileSync(planPath, 'utf8'));
@@ -59,40 +57,13 @@ const cand = (tag, k) => path.join(CAND, `${base(tag)}_${k}.png`);
 const want = new Set(only.split(',').filter(Boolean).map((t) => (t.startsWith('@') ? t : '@' + t)));
 const isT2I = (tag) => !(PLAN[tag].refImage || []).length;
 
-/* ---------- ② 挑图服务：静态托管 候选/，选择实时写进 候选/选择.json，「选完了」就退出 ---------- */
-if (serve) {
-  const http = await import('node:http');
-  const SEL = path.join(CAND, '选择.json');
-  if (!fs.existsSync(path.join(CAND, '挑图.html'))) { console.error('还没有挑图网页，先跑 --stage t2i'); process.exit(2); }
-  const types = { '.html': 'text/html; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png', '.json': 'application/json' };
-  const body = (req) => new Promise((ok) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => ok(b)); });
-  const srv = http.createServer(async (req, res) => {
-    const u = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-    if (req.method === 'GET' && u === '/selection') { res.writeHead(200, { 'content-type': types['.json'] }); return res.end(fs.existsSync(SEL) ? fs.readFileSync(SEL) : '{}'); }
-    if (req.method === 'POST' && (u === '/selection' || u === '/done')) {
-      const sel = JSON.parse((await body(req)) || '{}');
-      fs.writeFileSync(SEL, JSON.stringify(sel, null, 1), 'utf8');
-      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); res.end('ok');
-      if (u === '/done') {
-        const total = Object.keys(PLAN).filter(isT2I).length, n = Object.keys(sel).length, re = Object.values(sel).filter((v) => +v === 0).length;
-        console.log(`选完了：选了 ${n} / ${total}（其中重抽 ${re}）→ ${path.resolve(SEL)}`);
-        setTimeout(() => process.exit(0), 300);
-      }
-      return;
-    }
-    const f = path.join(CAND, u === '/' ? '挑图.html' : u);
-    if (!path.resolve(f).startsWith(path.resolve(CAND))) { res.writeHead(403); return res.end(); }
-    if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end(); }
-    res.writeHead(200, { 'content-type': types[path.extname(f)] || 'application/octet-stream' });
-    fs.createReadStream(f).pipe(res);
-  });
-  srv.listen(+serve, '0.0.0.0', () => console.log(`挑图服务已开：端口 ${serve}（用本机局域网 IP 访问）。用户点「选完了」后本进程退出。`));
-  await new Promise(() => {});
-}
-
 /* ---------- ② 挑图：把选中的候选拷成正式的图 ---------- */
 if (pick) {
-  const P = JSON.parse(fs.readFileSync(pick, 'utf8'));
+  /* 文件就按 JSON 读；否则按挑图网页复制出来的文字读：一行一个 "<tag> <数字>" */
+  const P = {};
+  if (fs.existsSync(pick)) Object.assign(P, JSON.parse(fs.readFileSync(pick, 'utf8')));
+  else for (const m of pick.matchAll(/(@?[a-z][a-z0-9_]*)\s*[:：=]?\s*(\d+)/g)) P[m[1]] = +m[2];
+  if (!Object.keys(P).length) { console.error('--pick 里没读到选择。格式：一行一个 "<tag> <第几张>"'); process.exit(2); }
   let ok = 0, re = 0;
   for (const [t, k] of Object.entries(P)) {
     const tag = t.startsWith('@') ? t : '@' + t;
@@ -167,7 +138,7 @@ async function render(tag, seed, dest) {
   }
 }
 
-/* 挑图网页：每个文生图资产一行候选，点图看大图，点「选这张」；导出 选择.json */
+/* 挑图网页：每个文生图资产一行候选，点图看大图，点「选这张」；「复制选择」复制一行一个 "<tag> <第几张>"，回对话粘贴 */
 function buildPickPage() {
   fs.mkdirSync(PREV, { recursive: true });
   const rows = [];
@@ -203,13 +174,10 @@ button{font:inherit;cursor:pointer}
 .exp:disabled{opacity:.5;cursor:default}
 #lb.on{display:flex} #lb img{max-width:96vw;max-height:96vh}
 </style></head><body>
-<div class="bar"><b>挑图</b><span id="cnt"></span><span id="msg"></span><button class="exp" id="exp">导出选择</button></div>
+<div class="bar"><b>挑图</b><span id="cnt"></span><span id="msg"></span><button class="exp" id="exp">复制选择</button></div>
 <div class="wrap" id="w"></div><div id="lb"><img alt=""></div>
 <script>
 var R=${JSON.stringify(rows)};var S={};
-var LIVE=/^https?:/.test(location.protocol);   // 由挑图服务打开：每次选择自动保存，按钮是「选完了」
-function save(path){ var o={};Object.keys(S).forEach(function(k){if(S[k]!==undefined)o[k]=S[k]});
-  return fetch(path,{method:'POST',body:JSON.stringify(o)}); }
 var w=document.getElementById('w'),lb=document.getElementById('lb');
 R.forEach(function(r){
   var d=document.createElement('div');d.className='row';
@@ -231,24 +199,23 @@ function sync(){
     d.querySelector('.re').classList.toggle('on',v===0)});
   var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length;
   document.getElementById('cnt').textContent='已选 '+n+' / '+R.length;
-  if(LIVE&&!sync.init) save('/selection');
 }
 lb.onclick=function(){lb.classList.remove('on')};
 document.addEventListener('keydown',function(e){if(e.key==='Escape')lb.classList.remove('on')});
 var exp=document.getElementById('exp'), msg=document.getElementById('msg');
-if(LIVE){
-  exp.textContent='选完了';
-  fetch('/selection').then(function(r){return r.json()}).then(function(o){S=o||{};sync.init=true;sync();sync.init=false});
-  exp.onclick=function(){
-    var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length;
-    if(n<R.length&&!confirm('还有 '+(R.length-n)+' 个没选，没选的不会往下出图。确定选完了？'))return;
-    save('/done').then(function(){exp.disabled=true;msg.textContent='已收到，接下来自动出编辑图，可以关掉这个页面了。'},
-      function(){msg.textContent='没连上挑图服务，选择已在页面上，稍后再点一次。'});
-  };
-}else exp.onclick=function(){
-  var o={};Object.keys(S).forEach(function(k){if(S[k]!==undefined)o[k]=S[k]});
-  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(o,null,1)],{type:'application/json'}));
-  a.download='选择.json';document.body.appendChild(a);a.click();a.remove();
+/* 选择存在本机浏览器里，关掉再开还在；复制出去的是一行一个 "<tag> <第几张>"，回对话里粘贴 */
+var KEY='pick:'+location.pathname;
+try{ S=JSON.parse(localStorage.getItem(KEY)||'{}') }catch(e){}
+var _sync=sync; sync=function(){ _sync(); try{ localStorage.setItem(KEY, JSON.stringify(S)) }catch(e){} };
+exp.onclick=function(){
+  var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length;
+  if(n<R.length&&!confirm('还有 '+(R.length-n)+' 个没选，没选的不会往下出图。照样复制？'))return;
+  var t=R.filter(function(r){return S[r.tag]!==undefined}).map(function(r){return r.tag+' '+S[r.tag]}).join(String.fromCharCode(10));
+  var ok=function(){msg.textContent='已复制 '+n+' 条，回到对话里粘贴就行'};
+  var fall=function(){var ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();
+    var done=false;try{done=document.execCommand('copy')}catch(e){}ta.remove();
+    if(done)ok();else window.prompt('复制失败，请手动复制这段文字：',t)};
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok,fall); else fall();
 };
 sync();
 </script></body></html>`;
@@ -276,6 +243,6 @@ fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`完成：出了 ${ok} 张，跳过已有 ${skip} 张，失败 ${fail} 张 → ${path.resolve(outDir)}`);
 if (stage === 't2i') {
   const n = buildPickPage();
-  console.log(`挑图网页：${path.resolve(CAND, '挑图.html')}（${n} 个资产）。选完导出 选择.json，再跑 --pick 选择.json，然后 --stage edit。`);
+  console.log(`挑图网页：${path.resolve(CAND, '挑图.html')}（${n} 个资产）。用户双击打开、选完点「复制选择」回对话粘贴；你把那段文字交给 --pick，再 --stage edit。`);
 }
 process.exit(fail ? 1 : 0);

@@ -4,5 +4,7 @@ This repository contains a modified version of the h3-image-prompt-writing skill
 https://github.com/MiniMax-AI/MiniMax-H3-Image (skills/h3-image-prompt-writing, commit 40850901ab938303b5274122b5f305ebc5b75c80).
 
 Modified files: SKILL.md (marked at the top of the file).
-Added files: references/film-assets.md, README.md, NOTICE.
+Added files: references/film-assets.md, scripts/render-comfyui.mjs, comfyui/ (h3_t2i.api.json, h3_edit.api.json, README.md), NOTICE.
+Third-party files: comfyui/official_t2i.json and comfyui/official_edit.json are unmodified ComfyUI workflow templates from
+https://github.com/Comfy-Org/workflow_templates (MIT License).
 Unchanged files: LICENSE, agents/openai.yaml, references/t2i-en.txt, references/edit-en.txt, scripts/generate.py.

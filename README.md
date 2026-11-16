@@ -246,8 +246,11 @@ H3-Image 的编辑（带参考图出图）有两个坑：
 
 ## 文件和许可
 
-- `h3-image-film-assets` 改自 [MiniMax-AI/MiniMax-H3-Image](https://github.com/MiniMax-AI/MiniMax-H3-Image) 官方的 `h3-image-prompt-writing` skill（Apache-2.0），
-  改动范围见它的 `SKILL.md` 顶部声明和 `NOTICE`；新增的是 `references/film-assets.md` 和 `scripts/render-comfyui.mjs`。
+- `h3-image-film-assets` 改自 [MiniMax-AI/MiniMax-H3-Image](https://github.com/MiniMax-AI/MiniMax-H3-Image) 官方的 `h3-image-prompt-writing` skill，
+  按 **MiniMax-H3-Image 社区许可协议**发布（见该文件夹的 `LICENSE` 和 `NOTICE`），不适用本仓库其余部分的许可。
+  改动范围见它的 `SKILL.md` 顶部声明和 `NOTICE`；新增的是 `references/film-assets.md`、`scripts/render-comfyui.mjs` 和 `comfyui/`。
+  注意该协议的适用地区不含欧盟、英国、韩国和美国。
+- `comfyui/` 里的两个官方模板来自 [Comfy-Org/workflow_templates](https://github.com/Comfy-Org/workflow_templates)（MIT）。
 - `ad-asset-bible` 另有一个[独立发布的版本](https://github.com/EVZheng-Lab/ad-asset-bible)，下游接的是 Higgsfield 的 Lira。
   本仓库里的这份是为这条流水线改过的：不停下等审阅、没有原型清单（交给设计师）、多了几个跟出图配合的字段。
 - 许可：<!-- 待定 -->

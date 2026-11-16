@@ -150,7 +150,9 @@ function buildPickPage() {
       if (!fs.existsSync(pv)) execFileSync('ffmpeg', ['-threads', '2', '-loglevel', 'error', '-y', '-i', cand(tag, k), '-vf', 'scale=1600:-2:flags=area', '-q:v', '4', pv]);
       ks.push(k);
     }
-    if (ks.length) rows.push({ tag, size: PLAN[tag].size || '', ks, chosen: fs.existsSync(file(tag)) });
+    /* v = 这组候选的版本（各候选文件的生成时间）。重抽后候选换了，v 就变，浏览器里存的旧选择自动作废 */
+    const v = ks.map((k) => Math.round(fs.statSync(cand(tag, k)).mtimeMs).toString(36)).join('.');
+    if (ks.length) rows.push({ tag, size: PLAN[tag].size || '', ks, v, chosen: fs.existsSync(file(tag)) });
   }
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>挑图</title><style>
@@ -205,8 +207,12 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape')lb.classList
 var exp=document.getElementById('exp'), msg=document.getElementById('msg');
 /* 选择存在本机浏览器里，关掉再开还在；复制出去的是一行一个 "<tag> <第几张>"，回对话里粘贴 */
 var KEY='pick:'+location.pathname;
-try{ S=JSON.parse(localStorage.getItem(KEY)||'{}') }catch(e){}
-var _sync=sync; sync=function(){ _sync(); try{ localStorage.setItem(KEY, JSON.stringify(S)) }catch(e){} };
+/* 存的是 {选择, 版本}；候选重出过（版本变了）的那几个，旧选择不恢复 */
+try{ var st=JSON.parse(localStorage.getItem(KEY)||'{}'), sv=st.v||{};
+  R.forEach(function(r){ if(st.s&&st.s[r.tag]!==undefined&&sv[r.tag]===r.v) S[r.tag]=st.s[r.tag] }) }catch(e){}
+var _sync=sync; sync=function(){ _sync();
+  var v={}; R.forEach(function(r){v[r.tag]=r.v});
+  try{ localStorage.setItem(KEY, JSON.stringify({s:S, v:v})) }catch(e){} };
 exp.onclick=function(){
   var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length;
   if(n<R.length&&!confirm('还有 '+(R.length-n)+' 个没选，没选的不会往下出图。照样复制？'))return;

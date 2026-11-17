@@ -1176,17 +1176,18 @@ if (meta.sceneCount !== undefined && locCovered.size + emptyCovered.size !== Num
       E(`${P}.image`, "image 必须是内嵌图片（data:image/…）", "用 scripts/attach-images.mjs 挂图，不要手写本机路径。");
 
   /* ===== 设计与出图单（可选）=====
-   * design / prompt / size / refImage 也不是盘点写的：design 是 art-designer 的设计说明，
-   * 后三项是出图 skill 的出图单，都由 scripts/attach-plan.mjs 按 tag 合进来。
+   * prompt / size / refImage 也不是盘点写的：是 art-designer 的出图单，
+   * 由 scripts/attach-plan.mjs 按 tag 合进来。
    * 角色底档也可以有（它的图就是那张脸图）。这里只查形状和引用，不查写法 ——
    * 写法是那两个 skill 的事，上面那些需求描述的闸门一条都不套在它们身上。 */
   const tags = new Set(all.map(([,a]) => a.tag));
   const deps = {};
   for (const [P,a] of all) {
-    for (const k of ['design','prompt'])
-      if (a[k] !== undefined && (typeof a[k] !== 'string' || !a[k].trim()))
-        E(`${P}.${k}`, `${k} 写了但是空的`, '没有就整个删掉这个字段。');
-    if (typeof a.design === 'string') checkPlaceholder(a.design, `${P}.design`);
+    if (a.design !== undefined)
+      E(`${P}.design`, '不再有单独的设计说明', '设计师直接出提示词：把设计写进 prompt，删掉 design。');
+    if (a.prompt !== undefined && (typeof a.prompt !== 'string' || !a.prompt.trim()))
+      E(`${P}.prompt`, 'prompt 写了但是空的', '没有就整个删掉这个字段。');
+    if (typeof a.prompt === 'string') checkPlaceholder(a.prompt, `${P}.prompt`);
     if (a.size !== undefined && !(typeof a.size === 'string' && /^\d{2,5}x\d{2,5}$/.test(a.size)))
       E(`${P}.size`, `size「${a.size}」不合规`, '写成 宽x高 的像素数，如 3136x1344。');
     if (a.refImage !== undefined) {
@@ -1225,7 +1226,7 @@ if (meta.sceneCount !== undefined && locCovered.size + emptyCovered.size !== Num
 if (!existsSync(SHELL)) { console.error(`外壳不见了: ${SHELL}`); process.exit(2); }
 const shell = readFileSync(SHELL, 'utf8');
 for (const need of ['{{DATA_JSON}}', '{{TITLE}}', 'id="badge"', 'id="tabs"', 'role="tablist"',
-                    'id="tb"', 'id="tbc"', 'id="tbp"', 'id="tbv"', 'id="tbb"', 'id="tbo"', 'id="tbd"', 'id="stages"', 'SELFTEST'])
+                    'id="tb"', 'id="tbc"', 'id="tbp"', 'id="tbv"', 'id="tbb"', 'id="tbo"', 'id="stages"', 'SELFTEST'])
   if (!shell.includes(need)) E('templates/report-shell.html', `外壳缺少 ${need}`, '恢复它，不要手补。');
 
 /* ===== 出结果 ===== */
@@ -1268,8 +1269,8 @@ if (BIOS.length) {
   const all = [];
   for (const k of ['assets','characters','outfits','props','effects'])
     (D[k]||[]).forEach(a => { all.push(a); (a.variants||[]).forEach(v => all.push(v)); });
-  const nd = all.filter(a => a.design).length, np = all.filter(a => a.prompt).length, ni = all.filter(a => a.image).length;
-  if (nd || np || ni) console.log(`  设计 ${nd} 条 · 提示词 ${np} 条 · 成图 ${ni} 张（共 ${all.length} 项）`);
+  const np = all.filter(a => a.prompt).length, ni = all.filter(a => a.image).length;
+  if (np || ni) console.log(`  提示词 ${np} 条 · 成图 ${ni} 张（共 ${all.length} 项）`);
 }
 if (refUses.length) console.log(`  ⚑ ${refUses.length} 处间接引用 —— 这些道具必须走参考生图，被引用的图要先出`);
 console.log(`\n自检截图用（直接 copy 这行）：`);

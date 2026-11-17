@@ -78,7 +78,6 @@ const withPlan = d => {
   d.outfits[0].prompt = 'The man in <Picture 1> is <Subject 1>. The target image is a character sheet.';
   d.outfits[0].size = '2720x1536';
   d.outfits[0].refImage = [d.characters[0].tag];
-  d.outfits[0].design = '一身旧工装，袖口磨得发白。';
   d.meta.designNote = '写实真人；当代中国北方小城。';
   d.assets[0].variants[0].refs = [d.characters[0].tag];   // 也可以写在场景变体上（主资产是空相框的底图）
   d.characters[1].sameFaceAs = d.characters[0].tag;  // 同一张脸、两个人
@@ -284,6 +283,10 @@ const CASES = [
   { name: 'plan-ref-no-prompt', expect: '有参考图却没有提示词',
     note: '光有参考图没有提示词，出图单上排不出这一张',
     mut: d => { withPlan(d); delete d.outfits[0].prompt; } },
+
+  { name: 'plan-design-field', expect: '不再有单独的设计说明',
+    note: '旧版的设计稿字段 design —— 设计师现在直接出提示词，旧数据要并进 prompt',
+    mut: d => { withPlan(d); d.outfits[0].design = '一身旧工装，袖口磨得发白。'; } },
 
   { name: 'plan-edit-twice', expect: '本身是编辑出来的图',
     note: '场景变体拿衍生区域编辑出来的图再编辑 —— 噪点累积；应该拿主区域的全景文生图',

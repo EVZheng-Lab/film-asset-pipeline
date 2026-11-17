@@ -104,7 +104,7 @@ if (pick) {
       fs.appendFileSync(path.join(CAND, '意见.jsonl'), JSON.stringify({ time: new Date().toISOString(), tag, pick: P[tag] ?? P[base(tag)], note }) + '\n');
       console.log(`✎ ${tag} 意见：${note}`);
     }
-    console.log('有意见的先改：设计没想到改设计稿，想到了没画出来改提示词，再换 --seed 重抽。');
+    console.log('有意见的先改：设计没想到改设计，想到了没画出来改写法，再换 --seed 重抽。');
   }
   const left = Object.keys(PLAN).filter((t) => isT2I(t) && !fs.existsSync(file(t)));
   console.log(`选定 ${ok} 张，重抽 ${re} 张。` + (left.length ? `还没选的文生图：${left.join(' ')}` : '文生图都选好了，可以跑 --stage edit。'));

@@ -2,12 +2,12 @@
 
 把一份剧本变成一份**资产盘点**：几处地方、几个人几套衣服、几件跨场景的道具、几个会重复出现的特效，
 每份几个变体、每场戏用哪一个；另给每个角色写一份角色档案（怎么演、说话什么声）。
-产出是 JSON + 一个自包含网页，交给同仓库的 art-designer（设计）和 h3-image-film-assets（提示词、出图）。
+产出是 JSON + 一个自包含网页，交给同仓库的 art-designer（设计并写成提示词、出图）。
 整条流水线怎么跑见仓库根目录 `PIPELINE.md`；agent 的操作规则见 `SKILL.md`。
 
-跟独立发布的 ad-asset-bible 的区别：盘完不停下等审阅；角色出图先出脸图、所有服装和状态变体都参考脸图；
+跟独立发布的 ad-asset-bible 的区别：盘完不停下等审阅；角色排第一的那套服装出三视图当身份图、其余服装和状态变体都参考它；
 支持衍生场景（`basedOn`）、场景里的人物形象（`refs`）、同脸不同人（`sameFaceAs`）、空镜（`emptyShots`）、
-以及合并设计稿与出图单的三阶段页面。
+以及合并出图单的两阶段页面。
 
 ## 目录
 
@@ -21,7 +21,7 @@ ad-asset-bible/
 │   └── how-to-write-bio.md          # 角色档案
 ├── scripts/
 │   ├── build.mjs                    # JSON → HTML，含结构预检（闸门）
-│   ├── attach-plan.mjs              # 合进设计稿与出图单
+│   ├── attach-plan.mjs              # 合进出图单
 │   ├── attach-images.mjs            # 挂成图（清单或 ComfyUI PNG 文件夹）
 │   ├── check-sync.mjs               # 外壳与 build.mjs 的常量同步检查
 │   └── make-test.mjs                # 闸门验收（非运行时）
@@ -37,11 +37,11 @@ node scripts/check-sync.mjs && node scripts/make-test.mjs   # 装完或改完闸
 
 ## 页面
 
-顶上三个阶段大 Tab：**需求清单 / 美术设计 / 提示词**。需求清单下五个小 Tab：场景 / 角色 · 服装 / 关键道具 / 特效 / 角色档案。
+顶上两个阶段大 Tab：**需求清单 / 提示词**。需求清单下五个小 Tab：场景 / 角色 · 服装 / 关键道具 / 特效 / 角色档案。
 每行的「复制」只给内容本身（不带 tag、场次这类账目），服装格自动拼上底档。档案按阶段各给一个复制按钮，
 拿到的是"开场 + 累积到这一段的变化"。网页只给电脑用，不考虑手机。
 
-深链：`?stage=need|design|prompt`、`?tab=loc|char|prop|vfx|bio|all`、`?row=N`、`?selftest=1`（显示自检横条）。
+深链：`?stage=need|prompt`、`?tab=loc|char|prop|vfx|bio|all`、`?row=N`、`?selftest=1`（显示自检横条）。
 
 ## 维护备注
 

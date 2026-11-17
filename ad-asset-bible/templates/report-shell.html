@@ -133,15 +133,14 @@
     //      "image": "data:image/jpeg;base64,…"  出完图后由 scripts/attach-images.mjs 挂上，
     //      页面显示成缩略图、点开看大图。只许内嵌图片，不许本机路径（页面要能整份发给别人）。
 
-    // ── 设计与出图单（可选，同上，任何一项都可以有）：不是盘点写的，是下游两个 skill 写、
-    //    由 scripts/attach-plan.mjs 按 tag 合进来的。页面顶上分三个阶段大 Tab：需求清单（下面那几张表）/
-    //    美术设计（design）/ 提示词（按参考图依赖排序、复制提示词、把图拖到卡上、保存成带图的新网页）。
-    //      "design":   "设计说明（art-designer）",
-    //      "prompt":   "出图提示词（出图 skill）",
+    // ── 出图单（可选，同上，任何一项都可以有）：不是盘点写的，是下游 art-designer（设计师）写、
+    //    由 scripts/attach-plan.mjs 按 tag 合进来的。页面顶上分两个阶段大 Tab：需求清单（下面那几张表）/
+    //    提示词（按参考图依赖排序、复制提示词、把图拖到卡上、保存成带图的新网页）。
+    //      "prompt":   "出图提示词（设计师直接写，设计就在提示词里）",
     //      "size":     "3136x1344",                 // 出图尺寸，宽x高
     //      "refImage": ["@char_xiaoming"]           // 参考图，按 <Picture 1>、<Picture 2>… 的顺序；不许绕成环
     //    整份出图单的通用说明（模型参数、参考图怎么处理）放 meta："renderNote": "…"
-    //    整部戏共用的设计约定（全剧坐标、同一栋建筑的约定、特效语言）放 meta："designNote": "…"
+    //    整部戏共用的设计约定（全剧坐标、同一栋建筑的约定、特效语言）放 meta："designNote": "…"，显示在提示词页顶上
     //    场景画面里出现某个角色的形象（遗照、雕像、海报）：写在场景的变体上（variants[].refs），可指角色底档（只要那张脸）；
     //      主资产是空着的底图（空相框、看不清脸的雕像），所有图都从它编辑出来
     //    同一张脸、不是同一个人（附身前后、转世）：characters[] 上写 "sameFaceAs": "@char_xxx"，指向出脸图的那个底档，
@@ -416,7 +415,7 @@
 
   /* 藏起来的缩略图 / 贴图框里的空图：.thumb、.drop img 自带 display，压过了 hidden 的默认样式 */
   [hidden]{display:none!important}
-  /* 阶段大 Tab：需求清单 / 美术设计 / 提示词 —— 比下面那排分类小 Tab 高一级，做成分段按钮 */
+  /* 阶段大 Tab：需求清单 / 提示词 —— 比下面那排分类小 Tab 高一级，做成分段按钮 */
   .stages{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 14px}
   .stg{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 16px;border:1px solid var(--border);
     border-radius:8px;background:var(--panel);color:var(--dim);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit}
@@ -427,13 +426,6 @@
     border:1px solid currentColor;font-size:12px}
   .stg .sw{font-size:12px;font-weight:400;color:var(--faint)}
   .stg .n{font-size:11.5px;font-weight:400;color:var(--faint);border:1px solid var(--border);border-radius:4px;padding:0 6px}
-  .dtabs{margin-bottom:14px}
-  .dsect{display:grid;gap:12px}
-  .dk{font-size:11.5px;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:0 6px;margin-right:8px}
-  .dimg .thumb{margin:0}
-  .noimg{min-height:110px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);
-    border-radius:6px;background:var(--panel2);color:var(--faint);font-size:12px}
-  .dtxt{white-space:pre-wrap;font-size:13.5px;line-height:1.8;color:var(--dim);margin-top:4px}
   .pp .copy{float:right}
   .psz{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:11.5px;color:var(--faint)}
   .ptxt{white-space:pre-wrap;font-size:12.5px;line-height:1.65;color:var(--dim);margin-top:4px;
@@ -450,6 +442,7 @@
   .savebar b{color:var(--accent);font-weight:600}
   .rnote{flex-basis:100%;color:var(--dim)}
   .rnote b{margin-right:8px}
+  #dnote{white-space:pre-line;max-height:220px;overflow:auto}
   .sbr{display:flex;gap:10px;align-items:center}
   #dirty{font-size:12px;color:#fcd34d}
   .savebtn{background:var(--accent);color:#111;border:0;border-radius:6px;padding:0 16px;height:44px;
@@ -535,13 +528,10 @@
   </div>
   </div><!-- /stage-need -->
 
-  <div class="stage" id="stage-design" role="tabpanel" aria-labelledby="stg-design" hidden>
-    <div class="plans" id="tbd"></div>
-  </div>
-
   <div class="stage" id="stage-prompt" role="tabpanel" aria-labelledby="stg-prompt" hidden>
     <div class="savebar">
       <div>复制提示词，按标的尺寸和参考图出图，出好的图<b>拖到对应的卡上</b>。贴完点「保存网页」，下载带图的新网页。</div>
+      <div class="rnote" id="dnote" hidden></div>
       <div class="rnote" id="rnote" hidden></div>
       <div class="sbr"><span id="dirty"></span><button type="button" id="save" class="savebtn">保存网页</button></div>
     </div>
@@ -991,51 +981,9 @@ var BYTAG={}, PLAN=[];
   var miss=base.filter(function(a){return !a.prompt}).length;
   if(PLAN.length&&miss) h+='<div class="note">另有 '+miss+' 项没有提示词。</div>';
   document.getElementById('tbo').innerHTML=h;
+  if(D.meta.designNote){ var dn=document.getElementById('dnote'); dn.innerHTML='<b>设计约定</b>'+esc(D.meta.designNote); dn.hidden=false; }
   if(D.meta.renderNote){ var rn=document.getElementById('rnote'); rn.innerHTML='<b>出图说明</b>'+esc(D.meta.renderNote); rn.hidden=false; }
 })();
-/* ---------- 美术设计页 ----------
-   只列有 design 的条目，按需求清单的分类和次序。图跟着显示（同一个 tag，贴图后同步）。 */
-var DESIGNS=[];
-(function(){
-  /* 按需求清单的分类和次序分小 Tab；每条标出它是哪一层（长相 / 造型 / 状态 / 变体） */
-  var groups=[{k:'loc',lab:'场景',it:[]},{k:'char',lab:'角色 · 服装',it:[]},{k:'prop',lab:'关键道具',it:[]},{k:'vfx',lab:'特效',it:[]}];
-  var kind={};
-  var flat=function(list,g,main,sub){ list.forEach(function(a){ g.push(a); kind[a.tag]=main;
-    (a.variants||[]).forEach(function(v){ g.push(v); kind[v.tag]=sub }) }) };
-  flat(LOCS,groups[0].it,'','变体');
-  CHARS.forEach(function(c){ groups[1].it.push(c); kind[c.tag]='长相';
-    flat(FITS.filter(function(f){return f.char===c.tag}),groups[1].it,'造型','状态') });
-  flat(PROPS,groups[2].it,'','状态'); flat(VFXS,groups[3].it,'','阶段');
-  var card=function(a){
-    DESIGNS.push(a);
-    return '<div class="pcard dcard">'+
-      '<div class="dimg">'+thumb(a.image, NAMES[a.tag]||a.tag, a.tag)+(a.image?'':'<div class="noimg">还没出图</div>')+'</div>'+
-      '<div class="pinfo"><div class="phd">'+(kind[a.tag]?'<span class="dk">'+kind[a.tag]+'</span>':'')+
-        '<span class="tag">'+esc(a.tag)+'</span> <span class="aname" style="display:inline">'+esc(NAMES[a.tag]||'')+'</span>'+
-        (a.scenes&&a.scenes.length?'<span class="pkind">场次 '+esc(a.scenes.join(' '))+'</span>':'')+'</div>'+
-        '<div class="pp"><button class="copy" data-p="'+push(a.design)+'">复制设计</button><div class="dtxt">'+esc(a.design)+'</div></div>'+
-      '</div></div>';
-  };
-  var live=groups.filter(function(g){ g.d=g.it.filter(function(a){return a.design}); return g.d.length });
-  var bar='', body='';
-  live.forEach(function(g,i){
-    var miss=g.it.length-g.d.length;
-    bar+='<button type="button" class="tab" role="tab" id="dtab-'+g.k+'" aria-controls="dsect-'+g.k+'" aria-selected="'+(i?'false':'true')+'"'+
-      ' tabindex="'+(i?-1:0)+'">'+esc(g.lab)+'<span class="n">'+g.d.length+'</span></button>';
-    body+='<div class="dsect" id="dsect-'+g.k+'" role="tabpanel" aria-labelledby="dtab-'+g.k+'"'+(i?' hidden':'')+'>'+
-      g.d.map(card).join('')+(miss?'<div class="note">另有 '+miss+' 项没有设计说明。</div>':'')+'</div>';
-  });
-  var dn=D.meta.designNote?'<div class="worldview" style="margin-bottom:14px"><b>设计约定</b>'+esc(D.meta.designNote)+'</div>':'';
-  document.getElementById('tbd').innerHTML=dn+(live.length>1?'<div class="tabs dtabs" role="tablist" aria-label="设计分类">'+bar+'</div>':'')+body;
-  var pick=function(k){
-    live.forEach(function(g){ var on=g.k===k, b=document.getElementById('dtab-'+g.k);
-      document.getElementById('dsect-'+g.k).hidden=!on;
-      if(b){ b.setAttribute('aria-selected',on?'true':'false'); b.tabIndex=on?0:-1; } });
-  };
-  live.forEach(function(g){ var b=document.getElementById('dtab-'+g.k); if(b) b.addEventListener('click',function(){ pick(g.k) }) });
-  var dt=Q.get('dtab'); if(dt&&live.some(function(g){return g.k===dt})) pick(dt);
-})();
-
 /* 参考图状态：那张图出了没有。贴图之后重算 */
 function refStatus(){
   document.querySelectorAll('.pref').forEach(function(el){
@@ -1115,12 +1063,11 @@ if(LIVE.length>1){
   wrapEl.className='wrap mode-all notabs';   // 只有一张表：不出 Tab 栏，表头贴顶
 }
 
-/* ---------- 阶段切换：需求清单 / 美术设计 / 提示词 ----------
-   三个 skill 的产出同住一页，各占一个大 Tab；需求清单下面才是场景/角色/道具/特效/档案那排小 Tab。
-   没有设计或没有提示词时，那个大 Tab 不出。?stage=need|design|prompt 深链。 */
+/* ---------- 阶段切换：需求清单 / 提示词 ----------
+   两个 skill 的产出同住一页，各占一个大 Tab；需求清单下面才是场景/角色/道具/特效/档案那排小 Tab。
+   没有提示词时，那个大 Tab 不出。?stage=need|prompt 深链。 */
 var STAGES=[{k:'need',lab:'需求清单',who:'副导演',n:LOCS.length+FITS.length+PROPS.length+VFXS.length},
-            {k:'design',lab:'美术设计',who:'设计师',n:DESIGNS.length},
-            {k:'prompt',lab:'提示词',who:'出图',n:PLAN.length}].filter(function(x){return x.k==='need'||x.n>0});
+            {k:'prompt',lab:'提示词',who:'设计师',n:PLAN.length}].filter(function(x){return x.k==='need'||x.n>0});
 var stgBtns={};
 function setStage(k){
   if(!stgBtns[k]) k='need';

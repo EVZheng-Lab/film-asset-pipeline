@@ -106,7 +106,7 @@ for (const n of REGEXES) {
 // ★ 带引号写（`"char"` 而不是 `char`），因为契约里每个字段都是 `"字段名":` 的形式，
 //   而裸写的短名会被别的字段名**包含**掉：`char` 是 `charCount` 和 `characters`
 //   的子串，裸写等于永真 —— 又一种空转的假绿。加新字段照这个格式写。
-const REQUIRED = ['"sameFaceAs"', '"designNote"', '"design"', '"prompt"', '"size"', '"refImage"', '"renderNote"', '"emptyShots"', '"assets"', '"tag"', '"name"', '"scenes"', '"brief"', '"variants"',
+const REQUIRED = ['"sameFaceAs"', '"designNote"', '"prompt"', '"size"', '"refImage"', '"renderNote"', '"emptyShots"', '"assets"', '"tag"', '"name"', '"scenes"', '"brief"', '"variants"',
   '"characters"', '"outfits"', '"char"', '"props"', '"refs"', '"basedOn"',
   '"sceneCount"', '"assetCount"', '"variantCount"', '"charCount"', '"outfitCount"', '"propCount"',
   '"worldview"',

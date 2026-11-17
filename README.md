@@ -277,4 +277,4 @@ agent 拿到意见先判断改设计还是改提示词，没写原因就先问�
 - `comfyui/` 里的两个官方模板来自 [Comfy-Org/workflow_templates](https://github.com/Comfy-Org/workflow_templates)（MIT）。
 - `ad-asset-bible` 另有一个[独立发布的版本](https://github.com/EVZheng-Lab/ad-asset-bible)，下游接的是 Higgsfield 的 Lira。
   本仓库里的这份是为这条流水线改过的：不停下等审阅、没有原型清单（交给设计师）、多了几个跟出图配合的字段。
-- 许可：<!-- 待定 -->
+- 许可：除 `h3-image-film-assets/` 以外，本仓库按 [MIT](LICENSE) 发布 —— 可以随意使用、修改、商用、再发布，保留版权声明即可，作者不承担任何担保责任。

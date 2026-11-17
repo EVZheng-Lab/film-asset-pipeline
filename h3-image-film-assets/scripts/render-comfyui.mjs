@@ -203,11 +203,14 @@ button{font:inherit;cursor:pointer}
 #lb{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;align-items:center;justify-content:center;cursor:zoom-out;z-index:9}
 #msg{color:#4ade80}
 .exp:disabled{opacity:.5;cursor:default}
+#flt{display:flex;gap:6px} #flt button{background:transparent;border:1px solid var(--border);color:var(--dim);border-radius:4px;padding:3px 12px}
+#flt button.on{border-color:var(--accent);color:var(--accent)}
+.row[hidden]{display:none}
 #lb.on{display:flex} #lb img{max-width:96vw;max-height:96vh;cursor:zoom-in}
 #lb.full{display:block;overflow:auto} #lb.full img{max-width:none;max-height:none;cursor:zoom-out}
 #lb .tip{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);color:var(--dim);font-size:12px;pointer-events:none}
 </style></head><body>
-<div class="bar"><b>挑图</b><span id="cnt"></span><span id="msg"></span><button class="exp" id="exp">复制选择</button></div>
+<div class="bar"><b>挑图</b><span id="flt"><button type="button" data-f="todo"></button><button type="button" data-f="done"></button><button type="button" data-f="all"></button></span><span id="msg"></span><button class="exp" id="exp">复制选择</button></div>
 <div class="wrap" id="w"></div><div id="lb"><img alt=""><span class="tip"></span></div>
 <script>
 var R=${JSON.stringify(rows)};var S={},N={};
@@ -232,9 +235,15 @@ function sync(){
     [].forEach.call(d.querySelectorAll('.c'),function(c,i){c.classList.toggle('on',v===d._r.ks[i])});
     d.querySelector('.re').classList.toggle('on',v===0);d.classList.toggle('redo',v===0);
     var nt=d.querySelector('.note');if(nt.value!==(N[d._r.tag]||''))nt.value=N[d._r.tag]||''});
-  var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length;
-  document.getElementById('cnt').textContent='已选 '+n+' / '+R.length;
+  var todo=R.filter(pending).length;
+  [].forEach.call(document.querySelectorAll('#flt button'),function(b){var f=b.getAttribute('data-f');
+    b.classList.toggle('on',f===F);b.textContent=FL[f]+' '+(f==='all'?R.length:f==='todo'?todo:R.length-todo)});
 }
+/* 待选 = 这次没点、以前也没选定过的。筛选只在点按钮、打开网页时生效，选完一个不会立刻从眼前消失 */
+function pending(r){return S[r.tag]===undefined&&!r.chosen}
+var F='all',FL={todo:'待选',done:'已选',all:'全部'};
+function filt(f){F=f;[].forEach.call(w.children,function(d){var p=pending(d._r);d.hidden=f==='todo'?!p:f==='done'?p:false});sync();scrollTo(0,0)}
+document.getElementById('flt').onclick=function(e){var f=e.target.getAttribute&&e.target.getAttribute('data-f');if(f)filt(f)};
 /* 先显示预览，原图（16MP）读完再换上；点图切换 1:1，点黑底关闭 */
 var lbi=lb.querySelector('img'), tip=lb.querySelector('.tip'), seq=0;
 function open(pv,orig){var n=++seq;lbi.src=pv;tip.textContent='原图加载中…';lb.classList.remove('full');lb.classList.add('on');
@@ -254,8 +263,9 @@ var _sync=sync; sync=function(){ _sync();
   var v={}; R.forEach(function(r){v[r.tag]=r.v});
   try{ localStorage.setItem(KEY, JSON.stringify({s:S, n:N, v:v})) }catch(e){} };
 exp.onclick=function(){
-  var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length;
-  if(n<R.length&&!confirm('还有 '+(R.length-n)+' 个没选，没选的不会往下出图。照样复制？'))return;
+  var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length, todo=R.filter(pending).length;
+  if(!n){msg.textContent='这次还没选任何一张';return}
+  if(todo&&!confirm('还有 '+todo+' 个没选，没选的不会往下出图。照样复制？'))return;
   var t=R.filter(function(r){return S[r.tag]!==undefined}).map(function(r){var n=S[r.tag]===0&&N[r.tag]?String(N[r.tag]).replace(/\\s+/g,' ').trim():'';return r.tag+' '+S[r.tag]+(n?' 意见：'+n:'')}).join(String.fromCharCode(10));
   var ok=function(){msg.textContent='已复制 '+n+' 条，回到对话里粘贴就行'};
   var fall=function(){var ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();
@@ -263,7 +273,7 @@ exp.onclick=function(){
     if(done)ok();else window.prompt('复制失败，请手动复制这段文字：',t)};
   if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok,fall); else fall();
 };
-sync();
+filt(R.some(pending)?'todo':'all');
 </script></body></html>`;
   fs.writeFileSync(path.join(CAND, '挑图.html'), html, 'utf8');
   return rows.length;

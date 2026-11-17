@@ -5,10 +5,11 @@
  *   ① 文生图，每张出几个候选，生成挑图网页：
  *      node render-comfyui.mjs <出图单.json> <图片目录> --server http://<主机>:8188 --stage t2i [--n 4]
  *   ② 人挑图：用户双击打开 <图片目录>/候选/挑图.html，每个资产选一张，点「复制选择」，回对话里粘贴。
- *      粘贴的是一行一个 "<tag> <第几张>"（0 = 都不要，重抽），原样交给 --pick：
+ *      粘贴的是一行一个 "<tag> <第几张>"（0 = 都不要，重抽；重抽的可以带 "意见：…"），原样交给 --pick：
  *      node render-comfyui.mjs <出图单.json> <图片目录> --pick "<粘贴的文字>"
  *      （--pick 也接受一个 JSON 文件：{ "@loc_gongyuan": 3 }。用户在对话里直接说"公园选 3"也行，你照着写。）
- *      重抽的那几张候选会被删掉；换个 --seed 再跑一次 ① 只会补出它们，再让用户挑一次。
+ *      重抽的那几张，旧候选挪进 候选/弃用/；带了意见的记进 候选/意见.jsonl。先按意见改设计或提示词，
+ *      再换个 --seed 跑一次 ① 只补出它们，再让用户挑一次。
  *   ③ 编辑（带参考图的），都拿选中的那张当参考：
  *      node render-comfyui.mjs <出图单.json> <图片目录> --server http://<主机>:8188 --stage edit
  *
@@ -72,21 +73,38 @@ const isT2I = (tag) => !(PLAN[tag].refImage || []).length;
 /* ---------- ② 挑图：把选中的候选拷成正式的图 ---------- */
 if (pick) {
   /* 文件就按 JSON 读；否则按挑图网页复制出来的文字读：一行一个 "<tag> <数字>" */
-  const P = {};
+  const P = {}, NOTE = {};
   if (fs.existsSync(pick)) Object.assign(P, JSON.parse(fs.readFileSync(pick, 'utf8')));
-  else for (const m of pick.matchAll(/(@?[a-z][a-z0-9_]*)\s*[:：=]?\s*(\d+)/g)) P[m[1]] = +m[2];
+  else for (const line of pick.split(/\r?\n/)) {
+    const m = line.match(/^\s*(@?[a-z][a-z0-9_]*)\s*[:：=]?\s*(\d+)\s*(?:意见[:：]?)?\s*(.*)$/);
+    if (m) { P[m[1]] = +m[2]; if (m[3].trim()) NOTE[m[1].startsWith('@') ? m[1] : '@' + m[1]] = m[3].trim(); }
+  }
   if (!Object.keys(P).length) { console.error('--pick 里没读到选择。格式：一行一个 "<tag> <第几张>"'); process.exit(2); }
   let ok = 0, re = 0;
   for (const [t, k] of Object.entries(P)) {
     const tag = t.startsWith('@') ? t : '@' + t;
     if (!PLAN[tag]) { console.log(`✗ ${tag} 不在出图单里`); continue; }
     if (+k === 0) {
-      for (const f of fs.readdirSync(CAND)) if (f.startsWith(base(tag) + '_')) fs.rmSync(path.join(CAND, f));
-      for (const f of fs.existsSync(PREV) ? fs.readdirSync(PREV) : []) if (f.startsWith(base(tag) + '_')) fs.rmSync(path.join(PREV, f));
-      re++; console.log(`↻ ${tag} 重抽：候选已删，换个 --seed 再跑 --stage t2i`); continue;
+      /* 不删：挪进 候选/弃用/，留着对照；文件名带时间，重抽几轮都不会撞 */
+      const OLD = path.join(CAND, '弃用'), stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+      fs.mkdirSync(OLD, { recursive: true });
+      const isCand = (f) => new RegExp('^' + base(tag) + '_\\d+\\.(png|jpg)$').test(f);
+      for (const f of fs.readdirSync(CAND)) if (isCand(f)) fs.renameSync(path.join(CAND, f), path.join(OLD, f.replace(/\.png$/, `_${stamp}.png`)));
+      for (const f of fs.existsSync(PREV) ? fs.readdirSync(PREV) : []) if (isCand(f)) fs.renameSync(path.join(PREV, f), path.join(OLD, f.replace(/\.jpg$/, `_${stamp}.jpg`)));
+      if (fs.readdirSync(CAND).some(isCand)) { console.log(`✗ ${tag} 旧候选没挪走（网盘同步占用？），先手动挪开再重抽`); continue; }
+      re++; console.log(`↻ ${tag} 重抽：旧候选挪进 候选/弃用/，换个 --seed 再跑 --stage t2i`); continue;
     }
     if (!fs.existsSync(cand(tag, k))) { console.log(`✗ ${tag} 没有第 ${k} 张候选`); continue; }
     fs.copyFileSync(cand(tag, k), file(tag)); ok++;
+  }
+  /* 用户写的修改意见：记进 候选/意见.jsonl，并打印出来 —— 按意见改设计或提示词之后再重抽，光换种子出来还是差不多 */
+  if (Object.keys(NOTE).length) {
+    fs.mkdirSync(CAND, { recursive: true });
+    for (const [tag, note] of Object.entries(NOTE)) {
+      fs.appendFileSync(path.join(CAND, '意见.jsonl'), JSON.stringify({ time: new Date().toISOString(), tag, pick: P[tag] ?? P[base(tag)], note }) + '\n');
+      console.log(`✎ ${tag} 意见：${note}`);
+    }
+    console.log('有意见的先改：设计没想到改设计稿，想到了没画出来改提示词，再换 --seed 重抽。');
   }
   const left = Object.keys(PLAN).filter((t) => isT2I(t) && !fs.existsSync(file(t)));
   console.log(`选定 ${ok} 张，重抽 ${re} 张。` + (left.length ? `还没选的文生图：${left.join(' ')}` : '文生图都选好了，可以跑 --stage edit。'));
@@ -180,6 +198,8 @@ button{font:inherit;cursor:pointer}
 .c.on{border-color:var(--accent)} .c.on .act button{background:var(--accent);color:#111}
 .re{background:transparent;border:1px solid var(--border);color:var(--dim);border-radius:4px;padding:2px 10px;margin-left:10px}
 .re.on{border-color:#f87171;color:#f87171}
+.note{display:none;width:100%;box-sizing:border-box;margin-top:8px;min-height:56px;resize:vertical;background:var(--panel2);color:var(--text);border:1px solid #f87171;border-radius:6px;padding:8px 10px;font:inherit}
+.row.redo .note{display:block}
 #lb{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;align-items:center;justify-content:center;cursor:zoom-out;z-index:9}
 #msg{color:#4ade80}
 .exp:disabled{opacity:.5;cursor:default}
@@ -190,11 +210,11 @@ button{font:inherit;cursor:pointer}
 <div class="bar"><b>挑图</b><span id="cnt"></span><span id="msg"></span><button class="exp" id="exp">复制选择</button></div>
 <div class="wrap" id="w"></div><div id="lb"><img alt=""><span class="tip"></span></div>
 <script>
-var R=${JSON.stringify(rows)};var S={};
+var R=${JSON.stringify(rows)};var S={},N={};
 var w=document.getElementById('w'),lb=document.getElementById('lb');
 R.forEach(function(r){
   var d=document.createElement('div');d.className='row';
-  d.innerHTML='<div class="hd">'+(r.name?'<b class="nm">'+r.name+'</b>':'')+'<code>${''}'+r.tag+'</code><span>'+r.size+(r.chosen?' · 已选过，再选会覆盖':'')+'</span><button class="re" type="button">都不要，重抽</button></div><div class="grid"></div>';
+  d.innerHTML='<div class="hd">'+(r.name?'<b class="nm">'+r.name+'</b>':'')+'<code>${''}'+r.tag+'</code><span>'+r.size+(r.chosen?' · 已选过，再选会覆盖':'')+'</span><button class="re" type="button">都不要，重抽</button></div><div class="grid"></div><textarea class="note" placeholder="哪里不满意、想要什么样（会跟着选择一起复制）"></textarea>';
   var g=d.querySelector('.grid');
   r.ks.forEach(function(k){
     var c=document.createElement('div');c.className='c';
@@ -203,13 +223,15 @@ R.forEach(function(r){
     c.querySelector('button').onclick=function(){S[r.tag]=k;sync()};
     g.appendChild(c);
   });
-  d.querySelector('.re').onclick=function(){S[r.tag]=S[r.tag]===0?undefined:0;sync()};
+  d.querySelector('.re').onclick=function(){S[r.tag]=S[r.tag]===0?undefined:0;sync();if(S[r.tag]===0)d.querySelector('.note').focus()};
+  d.querySelector('.note').oninput=function(){N[r.tag]=this.value;sync()};
   d._r=r;w.appendChild(d);
 });
 function sync(){
   [].forEach.call(w.children,function(d){var v=S[d._r.tag];
     [].forEach.call(d.querySelectorAll('.c'),function(c,i){c.classList.toggle('on',v===d._r.ks[i])});
-    d.querySelector('.re').classList.toggle('on',v===0)});
+    d.querySelector('.re').classList.toggle('on',v===0);d.classList.toggle('redo',v===0);
+    var nt=d.querySelector('.note');if(nt.value!==(N[d._r.tag]||''))nt.value=N[d._r.tag]||''});
   var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length;
   document.getElementById('cnt').textContent='已选 '+n+' / '+R.length;
 }
@@ -227,14 +249,14 @@ var exp=document.getElementById('exp'), msg=document.getElementById('msg');
 var KEY='pick:'+location.pathname;
 /* 存的是 {选择, 版本}；候选重出过（版本变了）的那几个，旧选择不恢复 */
 try{ var st=JSON.parse(localStorage.getItem(KEY)||'{}'), sv=st.v||{};
-  R.forEach(function(r){ if(st.s&&st.s[r.tag]!==undefined&&sv[r.tag]===r.v) S[r.tag]=st.s[r.tag] }) }catch(e){}
+  R.forEach(function(r){ if(st.s&&st.s[r.tag]!==undefined&&sv[r.tag]===r.v){S[r.tag]=st.s[r.tag];if(st.n&&st.n[r.tag])N[r.tag]=st.n[r.tag]} }) }catch(e){}
 var _sync=sync; sync=function(){ _sync();
   var v={}; R.forEach(function(r){v[r.tag]=r.v});
-  try{ localStorage.setItem(KEY, JSON.stringify({s:S, v:v})) }catch(e){} };
+  try{ localStorage.setItem(KEY, JSON.stringify({s:S, n:N, v:v})) }catch(e){} };
 exp.onclick=function(){
   var n=Object.keys(S).filter(function(k){return S[k]!==undefined}).length;
   if(n<R.length&&!confirm('还有 '+(R.length-n)+' 个没选，没选的不会往下出图。照样复制？'))return;
-  var t=R.filter(function(r){return S[r.tag]!==undefined}).map(function(r){return r.tag+' '+S[r.tag]}).join(String.fromCharCode(10));
+  var t=R.filter(function(r){return S[r.tag]!==undefined}).map(function(r){var n=S[r.tag]===0&&N[r.tag]?String(N[r.tag]).replace(/\\s+/g,' ').trim():'';return r.tag+' '+S[r.tag]+(n?' 意见：'+n:'')}).join(String.fromCharCode(10));
   var ok=function(){msg.textContent='已复制 '+n+' 条，回到对话里粘贴就行'};
   var fall=function(){var ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();
     var done=false;try{done=document.execCommand('copy')}catch(e){}ta.remove();

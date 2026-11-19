@@ -3,8 +3,8 @@
  * 出图环境：查这台电脑（或用户给的 ComfyUI 地址）能不能跑 H3-Image，缺什么就装什么。
  *
  *   node h3-env.mjs check [--server http://<主机>:8188] [--json] [--mock 情况.json]
- *      不给 --server：查本机 —— 显卡、显存、驱动、内存、磁盘、ffmpeg，本机有没有在跑的 ComfyUI（8188 / 8000 端口），
- *      各盘根目录和桌面、文档、下载下面有没有装过 ComfyUI，版本够不够（要有 MiniMaxH3ImageConditioning 节点，v0.45.0 起），三个模型在不在。
+ *      不给 --server：查本机 —— 显卡、显存、驱动、内存、磁盘、ffmpeg，本机有没有在跑的 ComfyUI（8188–8199、8000 端口），
+ *      各盘根目录和桌面、文档、下载往下两层有没有装过 ComfyUI，版本够不够（要有 MiniMaxH3ImageConditioning 节点，v0.45.0 起），三个模型在不在。
  *      给了 --server（云端或局域网里另一台）：只查那台的节点和模型，本机硬件不算。
  *      最后一行给结论（verdict），--json 时整份输出 JSON。--mock 用一份 JSON 顶替探测结果，测试用。
  *
@@ -95,22 +95,35 @@ function findModel(root, names, depth = 2) {
   }
   return null;
 }
+/** 各盘根目录、桌面、文档、下载往下两层，名字带 comfy 的（D:\ComfyUI_windows_portable、D:\AI\ComfyUI、D:\秋叶\ComfyUI 都能找到） */
 function findInstalls() {
   const roots = drives();
   const home = os.homedir();
   roots.push(...['Desktop', 'Documents', 'Downloads'].map((d) => path.join(home, d)).filter((d) => fs.existsSync(d)));
+  const SKIP = /^(\$|windows$|program ?files|programdata$|system volume information$|recovery$|perflogs$|msocache$|appdata$)/i;
   const seen = new Set(), found = [];
   const tryDir = (d) => { if (seen.has(d)) return; seen.add(d); const i = asInstall(d); if (i) { found.push(i); seen.add(i.code); } };
+  const subdirs = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory() && !SKIP.test(e.name)).map((e) => e.name); } catch { return []; } };
   for (const r of roots) {
-    let ents; try { ents = fs.readdirSync(r, { withFileTypes: true }); } catch { continue; }
-    for (const e of ents) {
-      if (!e.isDirectory() || !/comfy|秋叶|绘世|sd-?webui|aigc/i.test(e.name)) continue;
-      const d = path.join(r, e.name);
-      tryDir(d);
-      try { for (const s of fs.readdirSync(d, { withFileTypes: true })) if (s.isDirectory() && /comfy/i.test(s.name)) tryDir(path.join(d, s.name)); } catch {}
+    for (const a of subdirs(r)) {
+      const d = path.join(r, a);
+      if (/comfy/i.test(a)) tryDir(d);
+      for (const b of subdirs(d)) if (/comfy/i.test(b)) tryDir(path.join(d, b));
     }
   }
   return found;
+}
+
+/** 本机 8188–8199、8000 上开着的 ComfyUI；system_stats 里的 argv 带着 main.py 的路径，能认出是哪一份 */
+async function runningServers() {
+  const out = [];
+  for (const p of [...Array(12).keys()].map((i) => 8188 + i).concat(8000)) {
+    const stats = await getJson(`http://127.0.0.1:${p}/system_stats`, 1500);
+    const a0 = stats?.system?.argv?.[0] || '';
+    // 双击 run_nvidia_gpu.bat 起的是相对路径 ComfyUI\main.py，认不出是哪一份；setup 起的带绝对路径
+    if (stats) out.push({ url: `http://127.0.0.1:${p}`, main: path.isAbsolute(a0) ? a0 : '' });
+  }
+  return out;
 }
 
 async function probeServer(url, remote) {
@@ -135,13 +148,24 @@ async function gather(server) {
     disks: drives().map((d) => ({ drive: d, freeGB: freeGB(d) })),
     ffmpeg: !!sh('ffmpeg', ['-version']) && !!sh('ffprobe', ['-version']),
     installs: findInstalls(), server: null };
-  for (const p of [8188, 8000]) { const s = await probeServer('http://127.0.0.1:' + p, false); if (s.ok) { f.server = s; break; } }
+  // 开着的 ComfyUI 可能不止一个（用户原来那份占着 8188，新装的在 8189）：挑能出图的那个
+  const ok = (s) => s.ok && s.h3Node && !missingOf(s.models).length;
+  for (const r of await runningServers()) {
+    const s = await probeServer(r.url, false);
+    s.main = r.main;
+    const inst = f.installs.find((i) => r.main && r.main.toLowerCase().startsWith(i.code.toLowerCase() + path.sep));
+    if (inst) inst.running = r.url;
+    if (!f.server || (ok(s) && !ok(f.server)) || (s.h3Node && !f.server.h3Node)) f.server = s;
+  }
   return f;
 }
 
 /* ---------- 结论 ---------- */
 const missingOf = (models) => MODELS.filter((m) => !models?.[m.kind]);
-const clipArg = (models) => models?.clip && path.basename(models.clip) !== MODELS[1].file ? ` --clip ${path.basename(models.clip)}` : '';
+/** 跟 render-comfyui.mjs 默认文件名不一样的（换了版本、放在子文件夹里）原样带上 —— ComfyUI 要的是列表里那个带子文件夹的名字。
+ *  带反斜杠或空格的加单引号：bash 和 PowerShell 都原样传 */
+const modelArgs = (models) => MODELS.filter((m) => models?.[m.kind] && models[m.kind] !== m.file)
+  .map((m) => ` --${m.kind} ${/[\s\\]/.test(models[m.kind]) ? `'${models[m.kind]}'` : models[m.kind]}`).join('');
 
 /** 驱动够不够、该装哪个便携版：cu130 版要 580 起，cu126 版要 560 起 */
 function buildFor(driver) {
@@ -161,7 +185,7 @@ function judge(f) {
     const miss = missingOf(s.models);
     if (miss.length) return { verdict: 'remote_models_missing', say: [...say, '那台机器缺模型（要放在那台的 ComfyUI\\models 下面）：',
       ...miss.map((m) => `  models/${m.dir}/${m.file}（${m.gb}GB）  ${MS}${m.dir}/${m.file}`)], warn };
-    return { verdict: 'ready', server: s.url, renderArgs: `--server ${s.url}${clipArg(s.models)}`, say: [...say, '节点和三个模型都在，可以出图。'], warn };
+    return { verdict: 'ready', server: s.url, renderArgs: `--server ${s.url}${modelArgs(s.models)}`, say: [...say, '节点和三个模型都在，可以出图。'], warn };
   }
 
   const g = f.gpu;
@@ -169,19 +193,21 @@ function judge(f) {
   const why = [];
   if (!g || g.vendor !== 'nvidia') why.push('没有 NVIDIA 显卡（H3-Image 只在 NVIDIA 卡上测过）');
   else if (g.vramGB < 12) why.push(`显存 ${g.vramGB}GB，至少要 12GB`);
-  if (f.ramGB < 32) why.push(`内存 ${f.ramGB}GB，至少要 32GB`);
+  if (f.ramGB < 30) why.push(`内存 ${f.ramGB}GB，至少要 32GB`);   // 32G 的机器常报 31G（核显占了一块），按 30 卡
   if (why.length) return { verdict: 'prompts_only', say: [...say, '这台电脑跑不了 H3-Image：' + why.join('；') + '。'], warn };
   if (g.vramGB < 16) warn.push(`显存 ${g.vramGB}GB：16GB 实测能跑，12GB 没用真卡测过，大概率能跑、会慢。`);
-  if (f.ramGB < 64) warn.push(`内存 ${f.ramGB}GB：出 16MP 大图时 ComfyUI 会多占约 36GB 内存，64GB 比较稳，${f.ramGB}GB 可能会卡。`);
+  if (f.ramGB < 60) warn.push(`内存 ${f.ramGB}GB：出 16MP 大图时 ComfyUI 会多占约 36GB 内存，64GB 比较稳，${f.ramGB}GB 可能会卡。`);
 
   const s = f.server;
   if (s?.ok && s.h3Node && !missingOf(s.models).length)
-    return { verdict: 'ready', server: s.url, renderArgs: `--server ${s.url}${clipArg(s.models)}`, say: [...say, `本机 ComfyUI ${s.version} 开着（${s.url}），节点和三个模型都在，可以出图。`], warn };
+    return { verdict: 'ready', server: s.url, renderArgs: `--server ${s.url}${modelArgs(s.models)}`, say: [...say, `本机 ComfyUI ${s.version} 开着（${s.url}），节点和三个模型都在，可以出图。`], warn };
 
-  const build = process.platform === 'win32' || f.os === 'win32' ? buildFor(g.driver) : null;
+  const build = (f.os || process.platform) === 'win32' ? buildFor(g.driver) : null;
   const installs = f.installs || [];
   const good = installs.find((i) => i.h3Node && !missingOf(i.models).length);
-  if (good) return { verdict: 'start', dir: good.dir, say: [...say, `${good.dir} 装好了（${good.version}），只是没开。setup --dir "${good.dir}" --update --start 会直接起起来（不用下载）。`], warn };
+  if (good) return good.portable
+    ? { verdict: 'start', dir: good.dir, say: [...say, `${good.dir} 装好了（${good.version}），只是没开。setup --dir "${good.dir}" --update --start 会直接起起来（不用下载）。`], warn }
+    : { verdict: 'start_manual', dir: good.dir, say: [...say, `${good.dir} 装好了（${good.version}），只是没开。这份不是便携版，脚本起不了，请用户按自己平时的方式打开 ComfyUI，再 check 一次。`], warn };
 
   const newer = installs.find((i) => i.h3Node);
   if (newer) {
@@ -189,6 +215,7 @@ function judge(f) {
     return { verdict: 'models_missing', dir: newer.dir, missGB: gbOf(miss.reduce((a, m) => a + m.gb, 0) * 1e9),
       say: [...say, `${newer.dir}（${newer.version}）版本够，缺模型：${miss.map((m) => `${m.file}（${m.gb}GB）`).join('、')}。`], warn };
   }
+  if ((f.os || process.platform) !== 'win32') return { verdict: 'manual_install', say: [...say, `没找到能用的 ComfyUI。setup 只会装 Windows 便携版；Linux / Mac 请按 ComfyUI 官方说明装（要 ${COMFY_MIN} 以上），模型地址见 art-designer/comfyui/README.md。`], warn };
   if (!build) return { verdict: 'driver_old', say: [...say, `显卡驱动 ${g.driver} 太旧（至少 560），请用户去 NVIDIA 官网或 GeForce Experience 更新驱动、重启后再来。`], warn };
 
   const allGB = gbOf(MODELS.reduce((a, m) => a + m.gb, 0) * 1e9);
@@ -208,10 +235,12 @@ function judge(f) {
 
 const NEXT = {
   ready: '照常出图，render-comfyui.mjs 带上 renderArgs。',
-  start: '跑 setup --update --start 把它起起来，再 check 一次。',
-  models_missing: '跟用户说一次要下多少，确认后跑 setup --dir <那份> --update（只补模型，版本够就不动代码）。',
-  old_comfy: '把两个选项原样问用户，用户选了再跑 setup。',
-  need_install: '跟用户说一次装在哪个盘、要下多少、大概多久，确认后跑 setup --new。',
+  start: '跑 setup --dir <那份> --update --start 把它起起来（不下载），再 check 一次。',
+  start_manual: '请用户自己打开那份 ComfyUI，再 check 一次；用户不会开就只出提示词。',
+  manual_install: '这次先只出提示词，告诉用户在 Linux / Mac 上要自己装 ComfyUI 和模型。',
+  models_missing: '跟用户说一次要下多少，确认后跑 setup --dir <那份> --update --start（只补模型，版本够就不动代码）。',
+  old_comfy: '把两个选项原样问用户，用户选了再跑 setup --update --start 或 setup --dir <新位置> --new --start。',
+  need_install: '跟用户说一次装在哪个盘、要下多少、大概多久，确认后跑 setup --dir <盘>:\ComfyUI_H3 --new --start。',
   driver_old: '驱动不由 agent 装。这次先只出提示词，告诉用户更新驱动后可以再出图。',
   prompts_only: '只出提示词，最后告诉用户：没找到能直接跑图的机器，提示词已经给你了，剩下的要靠你自己出图。',
   disk_full: '把要多少空间告诉用户，等用户腾出来再 check；这次先只出提示词。',
@@ -225,8 +254,11 @@ async function check() {
   const asJson = flag('json');
   const f = await gather(server);
   const r = judge(f);
-  if (!f.remote && f.ffmpeg === false && ['ready', 'start', 'models_missing', 'old_comfy', 'need_install'].includes(r.verdict))
-    r.warn.push('没装 ffmpeg / ffprobe（出图和挂图要用）：setup 会顺手下一份。');
+  if (!f.remote && f.ffmpeg === false) {
+    const ff = (f.installs || []).map((i) => path.join(i.dir, '_tools', 'ffmpeg', 'bin')).find((d) => fs.existsSync(path.join(d, 'ffmpeg.exe')));
+    if (ff) { r.ffmpegDir = ff; r.warn.push(`ffmpeg 不在 PATH 里，setup 下过一份在 ${ff}：跑出图和挂图的命令前把它加进 PATH。`); }
+    else if (['ready', 'start', 'models_missing', 'old_comfy', 'need_install'].includes(r.verdict)) r.warn.push('没装 ffmpeg / ffprobe（出图和挂图要用）：setup 会顺手下一份。');
+  }
   if (!f.remote && f.disks) {
     const best = [...f.disks].sort((a, b) => (b.freeGB || 0) - (a.freeGB || 0))[0];
     r.disks = f.disks; r.suggestDrive = best?.drive;
@@ -250,6 +282,9 @@ async function check() {
 }
 
 /* ---------- 安装 ---------- */
+/** 出错不直接 process.exit：端口扫描的连接还没关完就退出，Windows 上的 Node 会崩在 libuv 断言（UV_HANDLE_CLOSING） */
+class Stop extends Error { constructor(msg, code) { super(msg); this.code = code; } }
+const fail = (msg, code = 1) => { throw new Stop(msg, code); };
 const run = (f, a, o = {}) => new Promise((res, rej) => {
   const p = spawn(f, a, { stdio: 'inherit', ...o });
   p.on('exit', (c) => (c === 0 ? res() : rej(new Error(`${path.basename(f)} 退出码 ${c}`))));
@@ -307,7 +342,7 @@ async function msSize(file) {
 
 async function sevenZip(tools) {
   const exe = path.join(tools, 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe');
-  if (!fs.existsSync(exe)) await run('npm', ['install', '7zip-bin', '--prefix', tools, '--registry', NPM_REG, '--no-audit', '--no-fund'], { shell: true });
+  if (!fs.existsSync(exe)) await run(`npm install 7zip-bin --prefix "${tools}" --registry ${NPM_REG} --no-audit --no-fund`, [], { shell: true });
   return exe;
 }
 
@@ -323,58 +358,77 @@ async function setup() {
   const dir = dirArg ? path.resolve(dirArg) : '';
   const isNew = flag('new'), isUpdate = flag('update'), start = flag('start'), dry = flag('dry-run'), noModels = flag('no-models');
   const portOpt = opt('port', '');
-  if (!dir || isNew === isUpdate) { console.error('用法：node h3-env.mjs setup --dir <装在哪> (--new | --update) [--port 8188] [--start] [--dry-run]'); process.exit(2); }
-  if (process.platform !== 'win32' && !mock) { console.error('setup 只支持 Windows 便携版。Linux / Mac 请按 ComfyUI 官方说明装，模型地址见 art-designer/comfyui/README.md。'); process.exit(2); }
+  if (!dir || isNew === isUpdate) { fail('用法：node h3-env.mjs setup --dir <装在哪> (--new | --update) [--port 8188] [--start] [--dry-run]', 2); }
+  if (process.platform !== 'win32' && !mock) { fail('setup 只支持 Windows 便携版。Linux / Mac 请按 ComfyUI 官方说明装，模型地址见 art-designer/comfyui/README.md。', 2); }
   const f = mock || await gather('');
   const build = buildFor(f.gpu?.driver);
-  if (!build) { console.error(`驱动 ${f.gpu?.driver || '?'} 太旧或没有 NVIDIA 显卡，不装。`); process.exit(3); }
+  if (!build) { fail(`驱动 ${f.gpu?.driver || '?'} 太旧或没有 NVIDIA 显卡，不装。`, 3); }
+  if (!mock && !fs.existsSync(path.parse(dir).root)) { fail(`没有 ${path.parse(dir).root} 这个盘。`, 2); }
   const tools = path.join(dir, '_tools');
   const steps = [];
   let inst = mock ? (f.installs || []).find((i) => path.resolve(i.dir) === dir) || null : asInstall(dir);
+  // 断点标记：装到一半断了，重跑时靠它知道该接着做，而不是被"已经有 ComfyUI""版本够了"挡住
+  const newMark = path.join(tools, '.新装中'), unpacked = path.join(tools, '.解压完'), updMark = path.join(tools, '.更新中');
 
   if (isNew) {
-    if (inst) { console.error(`${dir} 里已经有 ComfyUI 了，换个位置，或用 --update。`); process.exit(2); }
-    // 只有 _tools 的是上次装了一半，接着装
-    if (fs.existsSync(dir) && fs.readdirSync(dir).some((e) => e !== '_tools')) { console.error(`${dir} 不是空目录，换个位置。`); process.exit(2); }
+    const resuming = fs.existsSync(newMark);
+    if (inst && !resuming) { fail(`${dir} 里已经有 ComfyUI 了，换个位置，或用 --update。`, 2); }
+    if (!resuming && fs.existsSync(dir) && fs.readdirSync(dir).some((e) => e !== '_tools')) { fail(`${dir} 不是空目录，换个位置。`, 2); }
     const url = `https://github.com/Comfy-Org/ComfyUI/releases/download/${COMFY_PIN}/${build.asset}`;
     steps.push({ say: `下载便携版 ComfyUI ${COMFY_PIN}（CUDA ${build.cuda}，约 ${PORTABLE_GB}GB）：${url}（走 GitHub 加速）`, gb: PORTABLE_GB, fn: async () => {
+      fs.writeFileSync(newMark, '');
       const arc = path.join(tools, build.asset);
-      await download((await pickMirror(url, dry)) + url, arc);
-      const z = await sevenZip(tools);
       const tmp = dir + '.解压中';
-      await run(z, ['x', arc, '-o' + tmp, '-y', '-bso0', '-bsp0']);
-      const top = fs.readdirSync(tmp)[0];
-      for (const e of fs.readdirSync(path.join(tmp, top))) fs.renameSync(path.join(tmp, top, e), path.join(dir, e));
-      rmDir(tmp);
-      if (fs.existsSync(arc)) fs.unlinkSync(arc);
+      if (!fs.existsSync(unpacked)) {
+        rmDir(tmp);
+        await download((await pickMirror(url, dry)) + url, arc);
+        const z = await sevenZip(tools);
+        try { await run(z, ['x', arc, '-o' + tmp, '-y', '-bso0', '-bsp0']); }
+        catch { rmDir(tmp); fs.unlinkSync(arc); throw new Error('压缩包解不开（多半是没下完整），已经删掉，重跑会重新下'); }
+        fs.writeFileSync(unpacked, '');
+      }
+      if (fs.existsSync(tmp)) {
+        const top = path.join(tmp, fs.readdirSync(tmp)[0]);
+        for (const e of fs.readdirSync(top)) if (!fs.existsSync(path.join(dir, e))) fs.renameSync(path.join(top, e), path.join(dir, e));
+        rmDir(tmp);
+      }
+      for (const x of [arc, unpacked, newMark]) if (fs.existsSync(x)) fs.unlinkSync(x);
     } });
   } else {
-    if (!inst) { console.error(`${dir} 里没找到 ComfyUI。`); process.exit(2); }
-    if (!inst.h3Node) {
-      if (!inst.portable) { console.error('这份不是官方便携版（没有 python_embeded），不支持原地更新，请用 --new 另装。'); process.exit(2); }
+    if (!inst) { fail(`${dir} 里没找到 ComfyUI。`, 2); }
+    if (!inst.h3Node || fs.existsSync(updMark)) {
+      if (!inst.portable) { fail('这份不是官方便携版（没有 python_embeded），不支持原地更新，请用 --new 另装。', 2); }
       const url = `https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/${COMFY_PIN}.zip`;
-      steps.push({ say: `备份 ${inst.code} 的代码到 ComfyUI_备份_${inst.version}\\（models、custom_nodes、input、output、user 不动不备份）`, fn: async () => {
-        const bak = path.join(dir, `ComfyUI_备份_${inst.version}`);
-        if (fs.existsSync(bak)) { console.log('  已经备份过，跳过'); return; }
+      const bak = path.join(dir, `ComfyUI_备份_${inst.version}`);
+      steps.push({ say: fs.existsSync(updMark) ? '上次更新到一半断了：备份已经做过，接着覆盖代码'
+        : `备份 ${inst.code} 的代码到 ${path.basename(bak)}\（models、custom_nodes、input、output、user 不动不备份）`, fn: async () => {
+        if (fs.existsSync(updMark)) { console.log('  上次已经备份过，跳过'); return; }
         const keep = new Set(['models', 'custom_nodes', 'input', 'output', 'user', 'temp']);
-        copyDir(inst.code, bak + '.tmp', (s) => keep.has(path.relative(inst.code, s).split(path.sep)[0]));
+        rmDir(bak + '.tmp');
+        copyDir(inst.code, bak + '.tmp', (x) => keep.has(path.relative(inst.code, x).split(path.sep)[0]));
+        if (fs.existsSync(bak)) rmDir(bak);
         fs.renameSync(bak + '.tmp', bak);
+        fs.writeFileSync(updMark, '');   // 备份好了才开始覆盖；覆盖完才删
       } });
       steps.push({ say: `下载 ComfyUI ${COMFY_PIN} 源码覆盖上去：${url}（走 GitHub 加速）`, gb: 0.03, fn: async () => {
         const zip = path.join(tools, `ComfyUI-${COMFY_PIN}.zip`);
         await download((await pickMirror(url, dry)) + url, zip);
         const tmp = path.join(tools, 'src');
         rmDir(tmp); fs.mkdirSync(tmp, { recursive: true });
-        await run(TAR, ['-xf', zip, '-C', tmp]);
-        const top = path.join(tmp, fs.readdirSync(tmp)[0]);
-        copyDir(top, inst.code);
+        try { await run(TAR, ['-xf', zip, '-C', tmp]); }
+        catch { rmDir(tmp); fs.unlinkSync(zip); throw new Error('源码包解不开（多半是没下完整），已经删掉，重跑会重新下'); }
+        copyDir(path.join(tmp, fs.readdirSync(tmp)[0]), inst.code);
         rmDir(tmp);
+        fs.unlinkSync(zip);
+        fs.unlinkSync(updMark);
       } });
     }
     // 每次都补一遍依赖：装好的几秒就跳过；上次覆盖完代码、装依赖断了的，这次能补上
     if (inst.portable) steps.push({ say: `用便携版自带的 Python 补齐依赖（阿里云源，不行换腾讯云、官方源）`, fn: async () => {
+      const py = path.join(dir, 'python_embeded', 'python.exe');
+      if (!fs.existsSync(py)) throw new Error(`找不到 ${py}：这份便携版不完整，请用 --new 另装一份`);
       for (const [i, idx] of PIP_INDEXES.entries()) {
-        try { return await run(path.join(dir, 'python_embeded', 'python.exe'), ['-s', '-m', 'pip', 'install', '-q', '-r', path.join(inst.code, 'requirements.txt'), '-i', idx]); }
+        try { return await run(py, ['-s', '-m', 'pip', 'install', '-q', '-r', path.join(inst.code, 'requirements.txt'), '-i', idx]); }
         catch (e) { if (i === PIP_INDEXES.length - 1) throw e; console.log(`  ${idx} 没装成，换下一个源`); }
       }
     } });
@@ -398,11 +452,17 @@ async function setup() {
   }
 
   const port = portOpt ? +portOpt : await freePort(8188);
-  if (start && inst && !inst.portable) { console.error('这份不是便携版，--start 起不了，请用户按自己平时的方式启动 ComfyUI。'); process.exit(2); }
+  if (start && inst && !inst.portable) { fail('这份不是便携版，--start 起不了，请用户按自己平时的方式启动 ComfyUI。', 2); }
   if (start) steps.push({ say: `启动 ComfyUI：http://127.0.0.1:${port}（日志 ${path.join(dir, 'comfyui.log')}）`, fn: async () => {
-    const log = fs.openSync(path.join(dir, 'comfyui.log'), 'a');
+    const main = path.join(dir, 'ComfyUI', 'main.py');
+    for (const r of await runningServers()) {
+      if (r.main.toLowerCase() === main.toLowerCase()) { console.log(`  已经开着：${r.url}（新下的模型它会自己扫到，不用重启）`); return; }
+      const s = await probeServer(r.url, false);
+      if (!r.main && s.h3Node) { console.log(`  ${r.url} 已经开着一个带 H3 节点的 ComfyUI（认不出是不是这一份），不再起第二个，免得两份抢显存。不是这一份的话，请用户先关掉它再 --start`); return; }
+    }
     const logPath = path.join(dir, 'comfyui.log');
-    const p = spawn(path.join(dir, 'python_embeded', 'python.exe'), ['-s', path.join('ComfyUI', 'main.py'), '--windows-standalone-build', '--port', String(port)],
+    const log = fs.openSync(logPath, 'a');
+    const p = spawn(path.join(dir, 'python_embeded', 'python.exe'), ['-s', main, '--windows-standalone-build', '--port', String(port)],
       { cwd: dir, detached: true, stdio: ['ignore', log, log], windowsHide: true });
     let exited = null; p.on('exit', (c) => { exited = c; }); p.unref();
     for (let i = 0; i < 60; i++) {
@@ -417,9 +477,9 @@ async function setup() {
   const drive = path.parse(dir).root;
   const free = mock ? (f.disks || []).find((d) => d.drive.toUpperCase() === drive.toUpperCase())?.freeGB : freeGB(fs.existsSync(drive) ? drive : '.');
   const need = total + (isNew ? PORTABLE_UNPACKED_GB : 0) + 5;
-  console.log(`要做 ${steps.length} 步，共下载约 ${total}GB（按 10MB/s 约 ${Math.ceil(total * 1000 / 10 / 60)} 分钟）；${drive} 剩 ${free ?? '?'}GB，需要约 ${gbOf(need * 1e9)}GB。`);
+  console.log(`要做 ${steps.length} 步，${total >= 0.1 ? `共下载约 ${total}GB（按 10MB/s 约 ${Math.ceil(total * 1000 / 10 / 60)} 分钟）` : '基本不用下载'}；${drive} 剩 ${free ?? '?'}GB，需要约 ${gbOf(need * 1e9)}GB。`);
   steps.forEach((s, i) => console.log(`${i + 1}. ${s.say}`));
-  if (free != null && free < need) { console.error(`\n${drive} 空间不够，换个盘。`); process.exit(3); }
+  if (free != null && free < need) { fail(`\n${drive} 空间不够，换个盘。`, 3); }
   if (dry) { console.log('\n（--dry-run：没有下载，没有改任何文件）'); return; }
 
   fs.mkdirSync(tools, { recursive: true });
@@ -429,6 +489,11 @@ async function setup() {
     (fs.existsSync(ff) ? `\nffmpeg 在 ${ff}，跑出图和挂图的命令前把它加进 PATH。` : '') + '\n再跑一次 check 确认。');
 }
 
-if (cmd === 'check') await check();
-else if (cmd === 'setup') await setup();
-else { console.error('用法：node h3-env.mjs check [--server URL] [--json]  |  node h3-env.mjs setup --dir <装在哪> (--new|--update) [--start] [--dry-run]'); process.exit(2); }
+try {
+  if (cmd === 'check') await check();
+  else if (cmd === 'setup') await setup();
+  else fail('用法：node h3-env.mjs check [--server URL] [--json]  |  node h3-env.mjs setup --dir <装在哪> (--new|--update) [--start] [--dry-run]', 2);
+} catch (e) {
+  console.error(e instanceof Stop ? e.message : `出错了：${e.message}`);
+  process.exitCode = e instanceof Stop ? e.code : 1;
+}

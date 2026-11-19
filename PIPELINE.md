@@ -37,12 +37,14 @@ node "$E" check --server http://<主机>:8188       # 云端 / 局域网里的�
 |---|---|
 | `ready` | 能出图。记下输出里的 `renderArgs`，出图时原样交给 `render-comfyui.mjs` |
 | `start` | 装好了只是没开：`setup --dir <那份> --update --start`，不用下载 |
+| `start_manual` | 装好了没开，但不是便携版、脚本起不了：请用户自己打开，再 `check` |
 | `need_install` | 没装过。跟用户说**一次**：装在哪个盘（输出里给了剩得最多的盘）、要下多少 GB、大概多久，确认后 `setup --dir <盘>:\ComfyUI_H3 --new --start` |
 | `old_comfy` | 装过但版本太旧。把输出里**两个选项原样问用户**：原地更新（插件可能不兼容、原来的工作流可能跑不起来），还是在新位置另装一份（原来的完全不动）。用户选了再 `setup --update` 或 `setup --new`。不是官方便携版的只能另装 |
 | `models_missing` | 版本够、缺模型：跟用户说一次要下多少，确认后 `setup --dir <那份> --update --start` |
 | `driver_old` | 显卡驱动太旧。**驱动不由你装**（装的时候黑屏、要重启、要管理员弹窗，会话会断）：告诉用户去 NVIDIA 官网或 GeForce Experience 更新、重启后再来。这次先只出提示词 |
 | `disk_full` | 哪个盘都放不下。告诉用户要多少空间；腾不出来这次就只出提示词 |
 | `prompts_only` | 配置不够（没有 NVIDIA 卡、显存不到 12GB、内存不到 32GB）。只出提示词 |
+| `manual_install` | Linux / Mac 上没装好 ComfyUI：setup 只会装 Windows 便携版。这次先只出提示词，告诉用户按官方说明自己装 |
 | `remote_*` | 另一台机器连不上、太旧或缺模型。那台不由你装，把输出里的原因和下载地址告诉用户；这次先只出提示词 |
 
 ```bash

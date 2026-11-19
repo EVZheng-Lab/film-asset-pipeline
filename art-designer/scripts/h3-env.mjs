@@ -12,8 +12,8 @@
  *      --new     在 <装在哪> 新装一份便携版 ComfyUI（Windows，NVIDIA）。用户原来那份不动。
  *      --update  把 <装在哪> 这份便携版原地更新到新版（先备份代码到 ComfyUI_备份_<旧版本>\，models / custom_nodes / 输入输出不动）。
  *      两种都会补齐缺的模型、没有 ffmpeg 就下一份放进 <装在哪>\_tools\。--start 装完把 ComfyUI 起起来并等它能连上。
- *      --dry-run 只列要做什么、下多少、从哪下，不下载不改文件。
- *      断了重跑会接着下（curl 续传）。国内源：ComfyUI 本体走 GitHub 加速（先测哪个快），模型走 ModelScope，pip 走清华源。
+ *      --dry-run 只列要做什么、下多少、从哪下，不下载不改文件。--no-models 不下模型（测安装流程用）。
+ *      断了重跑会接着下（curl 续传）。国内源：ComfyUI 本体走 GitHub 加速（先测哪个快），模型走 ModelScope，pip 走阿里云源。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,10 +32,13 @@ const MODELS = [
   { kind: 'vae', loader: 'VAELoader', input: 'vae_name', dir: 'vae', file: 'minimax_h3_image_vae_fp16.safetensors', gb: 1.2 },
 ];
 const GH_MIRRORS = ['https://gh-proxy.com/', 'https://ghproxy.net/', ''];
-const PIP_INDEX = 'https://pypi.tuna.tsinghua.edu.cn/simple';
+// 清华、中科大源缺 ComfyUI 的模板素材包（comfyui-workflow-templates-media-assets-*），用阿里云，不行再换
+const PIP_INDEXES = ['https://mirrors.aliyun.com/pypi/simple', 'https://mirrors.cloud.tencent.com/pypi/simple', 'https://pypi.org/simple'];
 const NPM_REG = 'https://registry.npmmirror.com';
 const FFMPEG_URL = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
 const PORTABLE_GB = 2.1, PORTABLE_UNPACKED_GB = 6;
+// 用 Windows 自带的 bsdtar：Git Bash 里的 GNU tar 会把 H:\ 当成远程主机
+const TAR = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
 
 /* ---------- 参数 ---------- */
 const argv = process.argv.slice(2);
@@ -232,8 +235,11 @@ async function check() {
     const need = { need_install: allGB + PORTABLE_UNPACKED_GB, old_comfy: allGB + PORTABLE_UNPACKED_GB, models_missing: r.missGB }[r.verdict];
     if (need) {
       r.needGB = Math.ceil(need + 5);
-      if ((best?.freeGB || 0) < r.needGB) { r.warn.push(`要约 ${r.needGB}GB 空间，哪个盘都不够。请用户先腾出空间；腾不出来这次就只出提示词。`); r.verdict = 'disk_full'; }
-      else r.say.push(`要约 ${r.needGB}GB 空间，剩得最多的是 ${best.drive.replace(/\\$/, '')} 盘。`);
+      // 补模型只能放进那份 ComfyUI 所在的盘
+      const at = r.verdict === 'models_missing' ? f.disks.find((d) => d.drive.toUpperCase() === path.parse(r.dir).root.toUpperCase()) : best;
+      const where = at?.drive.replace(/\\$/, '');
+      if ((at?.freeGB || 0) < r.needGB) { r.warn.push(`要约 ${r.needGB}GB 空间，${r.verdict === 'models_missing' ? `${where} 盘不够` : '哪个盘都不够'}。请用户先腾出空间；腾不出来这次就只出提示词。`); r.verdict = 'disk_full'; }
+      else r.say.push(r.verdict === 'models_missing' ? `要约 ${r.needGB}GB 空间，${where} 盘够。` : `要约 ${r.needGB}GB 空间，剩得最多的是 ${where} 盘。`);
     }
   }
   r.next = NEXT[r.verdict];
@@ -278,6 +284,22 @@ async function download(url, dest, totalBytes) {
   fs.renameSync(part, dest);
 }
 
+/** 逐个复制、逐个删除。不用 Node 自带的递归复制 / 递归删除：Node 24 在 Windows 上碰到中文路径
+ *  会直接崩掉（退出码 127，不报错），或者报成功其实没删 */
+function rmDir(d) {
+  if (!fs.existsSync(d)) return;
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) { const a = path.join(d, e.name); if (e.isDirectory()) rmDir(a); else fs.unlinkSync(a); }
+  fs.rmdirSync(d);
+}
+function copyDir(src, dst, skip = () => false) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    const a = path.join(src, e.name), b = path.join(dst, e.name);
+    if (skip(a)) continue;
+    if (e.isDirectory()) copyDir(a, b, skip); else if (e.isFile()) fs.copyFileSync(a, b);
+  }
+}
+
 async function msSize(file) {
   const j = await getJson('https://www.modelscope.cn/api/v1/models/Comfy-Org/MiniMax-H3-Image/repo/files?Recursive=true', 20000);
   return j?.Data?.Files?.find((x) => x.Path === file)?.Size || null;
@@ -299,7 +321,7 @@ async function freePort(p) {
 async function setup() {
   const dirArg = opt('dir', '');
   const dir = dirArg ? path.resolve(dirArg) : '';
-  const isNew = flag('new'), isUpdate = flag('update'), start = flag('start'), dry = flag('dry-run');
+  const isNew = flag('new'), isUpdate = flag('update'), start = flag('start'), dry = flag('dry-run'), noModels = flag('no-models');
   const portOpt = opt('port', '');
   if (!dir || isNew === isUpdate) { console.error('用法：node h3-env.mjs setup --dir <装在哪> (--new | --update) [--port 8188] [--start] [--dry-run]'); process.exit(2); }
   if (process.platform !== 'win32' && !mock) { console.error('setup 只支持 Windows 便携版。Linux / Mac 请按 ComfyUI 官方说明装，模型地址见 art-designer/comfyui/README.md。'); process.exit(2); }
@@ -312,7 +334,8 @@ async function setup() {
 
   if (isNew) {
     if (inst) { console.error(`${dir} 里已经有 ComfyUI 了，换个位置，或用 --update。`); process.exit(2); }
-    if (fs.existsSync(dir) && fs.readdirSync(dir).length) { console.error(`${dir} 不是空目录，换个位置。`); process.exit(2); }
+    // 只有 _tools 的是上次装了一半，接着装
+    if (fs.existsSync(dir) && fs.readdirSync(dir).some((e) => e !== '_tools')) { console.error(`${dir} 不是空目录，换个位置。`); process.exit(2); }
     const url = `https://github.com/Comfy-Org/ComfyUI/releases/download/${COMFY_PIN}/${build.asset}`;
     steps.push({ say: `下载便携版 ComfyUI ${COMFY_PIN}（CUDA ${build.cuda}，约 ${PORTABLE_GB}GB）：${url}（走 GitHub 加速）`, gb: PORTABLE_GB, fn: async () => {
       const arc = path.join(tools, build.asset);
@@ -322,8 +345,8 @@ async function setup() {
       await run(z, ['x', arc, '-o' + tmp, '-y', '-bso0', '-bsp0']);
       const top = fs.readdirSync(tmp)[0];
       for (const e of fs.readdirSync(path.join(tmp, top))) fs.renameSync(path.join(tmp, top, e), path.join(dir, e));
-      fs.rmSync(tmp, { recursive: true, force: true });
-      fs.rmSync(arc, { force: true });
+      rmDir(tmp);
+      if (fs.existsSync(arc)) fs.unlinkSync(arc);
     } });
   } else {
     if (!inst) { console.error(`${dir} 里没找到 ComfyUI。`); process.exit(2); }
@@ -332,26 +355,33 @@ async function setup() {
       const url = `https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/${COMFY_PIN}.zip`;
       steps.push({ say: `备份 ${inst.code} 的代码到 ComfyUI_备份_${inst.version}\\（models、custom_nodes、input、output、user 不动不备份）`, fn: async () => {
         const bak = path.join(dir, `ComfyUI_备份_${inst.version}`);
+        if (fs.existsSync(bak)) { console.log('  已经备份过，跳过'); return; }
         const keep = new Set(['models', 'custom_nodes', 'input', 'output', 'user', 'temp']);
-        fs.cpSync(inst.code, bak, { recursive: true, filter: (s) => !keep.has(path.relative(inst.code, s).split(path.sep)[0]) });
+        copyDir(inst.code, bak + '.tmp', (s) => keep.has(path.relative(inst.code, s).split(path.sep)[0]));
+        fs.renameSync(bak + '.tmp', bak);
       } });
       steps.push({ say: `下载 ComfyUI ${COMFY_PIN} 源码覆盖上去：${url}（走 GitHub 加速）`, gb: 0.03, fn: async () => {
         const zip = path.join(tools, `ComfyUI-${COMFY_PIN}.zip`);
         await download((await pickMirror(url, dry)) + url, zip);
         const tmp = path.join(tools, 'src');
-        fs.rmSync(tmp, { recursive: true, force: true }); fs.mkdirSync(tmp, { recursive: true });
-        await run('tar', ['-xf', zip, '-C', tmp]);
+        rmDir(tmp); fs.mkdirSync(tmp, { recursive: true });
+        await run(TAR, ['-xf', zip, '-C', tmp]);
         const top = path.join(tmp, fs.readdirSync(tmp)[0]);
-        fs.cpSync(top, inst.code, { recursive: true, force: true });
-        fs.rmSync(tmp, { recursive: true, force: true });
+        copyDir(top, inst.code);
+        rmDir(tmp);
       } });
-      steps.push({ say: `用便携版自带的 Python 装新版依赖（清华源）`, fn: () => run(path.join(dir, 'python_embeded', 'python.exe'),
-        ['-s', '-m', 'pip', 'install', '-r', path.join(inst.code, 'requirements.txt'), '-i', PIP_INDEX]) });
     }
+    // 每次都补一遍依赖：装好的几秒就跳过；上次覆盖完代码、装依赖断了的，这次能补上
+    if (inst.portable) steps.push({ say: `用便携版自带的 Python 补齐依赖（阿里云源，不行换腾讯云、官方源）`, fn: async () => {
+      for (const [i, idx] of PIP_INDEXES.entries()) {
+        try { return await run(path.join(dir, 'python_embeded', 'python.exe'), ['-s', '-m', 'pip', 'install', '-q', '-r', path.join(inst.code, 'requirements.txt'), '-i', idx]); }
+        catch (e) { if (i === PIP_INDEXES.length - 1) throw e; console.log(`  ${idx} 没装成，换下一个源`); }
+      }
+    } });
   }
 
   const models = inst?.models || {};
-  for (const m of missingOf(models)) {
+  for (const m of noModels ? [] : missingOf(models)) {
     const url = MS + `${m.dir}/${m.file}`;
     steps.push({ say: `下载模型 ${m.file}（${m.gb}GB）：${url}`, gb: m.gb, fn: async () =>
       download(url, path.join(inst ? inst.code : path.join(dir, 'ComfyUI'), 'models', m.dir, m.file), await msSize(`${m.dir}/${m.file}`)) });
@@ -360,10 +390,10 @@ async function setup() {
     steps.push({ say: `下载 ffmpeg 到 ${path.join(tools, 'ffmpeg')}（约 0.2GB，走 GitHub 加速）`, gb: 0.2, fn: async () => {
       const zip = path.join(tools, 'ffmpeg.zip');
       await download((await pickMirror(FFMPEG_URL, dry)) + FFMPEG_URL, zip);
-      await run('tar', ['-xf', zip, '-C', tools]);
+      await run(TAR, ['-xf', zip, '-C', tools]);
       const top = fs.readdirSync(tools).find((e) => /^ffmpeg-/.test(e) && fs.statSync(path.join(tools, e)).isDirectory());
       fs.renameSync(path.join(tools, top), path.join(tools, 'ffmpeg'));
-      fs.rmSync(zip, { force: true });
+      if (fs.existsSync(zip)) fs.unlinkSync(zip);
     } });
   }
 
@@ -371,10 +401,16 @@ async function setup() {
   if (start && inst && !inst.portable) { console.error('这份不是便携版，--start 起不了，请用户按自己平时的方式启动 ComfyUI。'); process.exit(2); }
   if (start) steps.push({ say: `启动 ComfyUI：http://127.0.0.1:${port}（日志 ${path.join(dir, 'comfyui.log')}）`, fn: async () => {
     const log = fs.openSync(path.join(dir, 'comfyui.log'), 'a');
-    spawn(path.join(dir, 'python_embeded', 'python.exe'), ['-s', path.join('ComfyUI', 'main.py'), '--windows-standalone-build', '--port', String(port)],
-      { cwd: dir, detached: true, stdio: ['ignore', log, log], windowsHide: true }).unref();
-    for (let i = 0; i < 60; i++) { if (await getJson(`http://127.0.0.1:${port}/system_stats`)) return; await new Promise((r) => setTimeout(r, 5000)); }
-    throw new Error(`5 分钟还没连上，看 ${path.join(dir, 'comfyui.log')}`);
+    const logPath = path.join(dir, 'comfyui.log');
+    const p = spawn(path.join(dir, 'python_embeded', 'python.exe'), ['-s', path.join('ComfyUI', 'main.py'), '--windows-standalone-build', '--port', String(port)],
+      { cwd: dir, detached: true, stdio: ['ignore', log, log], windowsHide: true });
+    let exited = null; p.on('exit', (c) => { exited = c; }); p.unref();
+    for (let i = 0; i < 60; i++) {
+      if (await getJson(`http://127.0.0.1:${port}/system_stats`)) return;
+      if (exited !== null) throw new Error(`ComfyUI 启动就退出了（退出码 ${exited}），日志最后几行：\n` + fs.readFileSync(logPath, 'utf8').trim().split('\n').slice(-8).join('\n'));
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+    throw new Error(`5 分钟还没连上，看 ${logPath}`);
   } });
 
   const total = gbOf(steps.reduce((a, s) => a + (s.gb || 0), 0) * 1e9);

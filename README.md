@@ -52,7 +52,8 @@ flowchart LR
 
 ## 快速开始
 
-**需要**：Node.js 18+、ffmpeg（缩图用）。出图可选：一台装了 H3-Image 的 ComfyUI（本地或云端的显卡都行）。
+**需要**：Node.js 18+。出图可选：一张 NVIDIA 显卡（16GB 显存实测能跑，12GB 大概率能跑，内存 64GB 比较稳），或者云端 / 局域网里一台装了 H3-Image 的 ComfyUI。
+ComfyUI、模型、ffmpeg 没装也没关系：agent 开始前会先查你的电脑，配置够就问你一次装在哪，然后全走国内源装好（约 51GB）；配置不够就只出提示词。
 
 ```bash
 git clone https://github.com/EVZheng-Lab/film-asset-pipeline.git
@@ -60,7 +61,7 @@ git clone https://github.com/EVZheng-Lab/film-asset-pipeline.git
 
 在 Claude Code（或别的能读文件、跑命令的 agent）里说：
 
-> 读 `film-asset-pipeline/PIPELINE.md`，帮我把这个剧本的资产做出来。剧本在 `<路径>`，剧名《…》。我（有 / 没有）出图通道。
+> 读 `film-asset-pipeline/PIPELINE.md`，帮我把这个剧本的资产做出来。剧本在 `<路径>`，剧名《…》。用这台电脑出图（或：用 `http://<主机>:8188` 那台出图）。
 
 agent 会依次读两个 skill 的 `SKILL.md` 照着做，中间不停下来等你审文字 —— 拿不准的地方它照最合理的猜，猜了什么写进汇报，
 你看图时觉得不对再回头改。产出放在一个工作目录里：
@@ -77,7 +78,7 @@ agent 会依次读两个 skill 的 `SKILL.md` 照着做，中间不停下来等�
 
 | 你有什么 | 怎么出 |
 |---|---|
-| 一台装了 H3-Image 的 ComfyUI | `render-comfyui.mjs` 分两段：先只出文生图（每个角色的第一套服装、主场景、道具、特效），每张 4 个候选，双击打开挑图网页点选（可以只看待选的），4 张都不满意就打回并写原因，点「复制选择」回对话粘贴；选完再出所有拿它们当参考的编辑图。不会在你不满意的底图上白出一堆 |
+| 一台能跑 H3-Image 的电脑（agent 帮你装好），或装好了的 ComfyUI | `render-comfyui.mjs` 分两段：先只出文生图（每个角色的第一套服装、主场景、道具、特效），每张 4 个候选，双击打开挑图网页点选（可以只看待选的），4 张都不满意就打回并写原因，点「复制选择」回对话粘贴；选完再出所有拿它们当参考的编辑图。不会在你不满意的底图上白出一堆 |
 | 没有 | 打开网页「提示词」页，复制提示词去自己的工具里出，图拖回卡上，保存网页 |
 
 ```bash

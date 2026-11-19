@@ -21,10 +21,11 @@
 
 ## 模型
 
-按官方模板的说明下载，放进 ComfyUI 对应目录（需要支持 H3-Image 的 ComfyUI 版本，先更新 ComfyUI）：
+不用手动下：`scripts/h3-env.mjs check` 查环境，`setup` 装便携版 ComfyUI 和下面三个模型（国内从 ModelScope 下）。
+手动下的话，放进 ComfyUI 对应目录（ComfyUI 要 v0.45.0 以上才有 H3-Image 节点）。HuggingFace 下不动就换 ModelScope 同名仓库：`https://www.modelscope.cn/models/Comfy-Org/MiniMax-H3-Image/resolve/master/<目录>/<文件名>`：
 
 - `models/diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors` —— [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image)
-- `models/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors` —— [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3)
+- `models/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors` —— [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image)
 - `models/vae/minimax_h3_image_vae_fp16.safetensors` —— [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image)
 
 官方模板来自 [Comfy-Org/workflow_templates](https://github.com/Comfy-Org/workflow_templates)（MIT 许可）。

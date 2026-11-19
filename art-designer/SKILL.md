@@ -183,7 +183,7 @@ description: 影视资产的美术设计，直接出 MiniMax H3-Image 的中文�
 
   按依赖顺序出、参考图自动缩到约 4MP、已出的跳过（断了重跑接着出）；模型文件名不同就加 `--unet / --clip / --vae`。
   编辑图单张重出：删掉那张，加 `--only <tag> --seed <新种子>` 再跑 `--stage edit`。
-  工作流文件和模型下载见 [comfyui/README.md](comfyui/README.md)
+  出图前先 `scripts/h3-env.mjs check` 查环境（缺什么 `setup` 装），工作流文件和模型下载见 [comfyui/README.md](comfyui/README.md)
 - **没有**：停在出图单。用户打开网页的「提示词」页，按顺序复制、自己出图、把图拖回卡片
 
 **不设审稿，也不自查**：写完直接出图，人看图提问题。人指出问题时先判断：
